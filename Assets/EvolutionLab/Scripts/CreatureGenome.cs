@@ -53,11 +53,12 @@ namespace EvolutionLab
     [Serializable]
     public sealed class BrainGene
     {
-        // Prototype 2 appends ecological observations after the original
-        // locomotion inputs so old genomes can still be repaired and loaded.
-        public const int InputCount = 14;
+        // Final keeps the original locomotion observations at the front of the
+        // vector and appends generic interaction/environment observations. This
+        // lets older archives repair forward without changing their lineage IDs.
+        public const int InputCount = 22;
         public const int HiddenCount = 8;
-        public const int MaxOutputCount = 8;
+        public const int MaxOutputCount = 12;
 
         public float[] inputHiddenWeights;
         public float[] hiddenBiases;
@@ -155,12 +156,127 @@ namespace EvolutionLab
         }
     }
 
+    /// <summary>
+    /// Continuous ecological traits. They are not species or roles: every
+    /// individual can inherit and mutate any combination of these values, and
+    /// the observed role is derived after the fact from behaviour and outcomes.
+    /// </summary>
+    [Serializable]
+    public sealed class EcologyGene
+    {
+        public float foragingDrive;
+        public float predationDrive;
+        public float defenseDrive;
+        public float socialDrive;
+        public float sensorRange;
+        public float bodyProtection;
+        public float energyEfficiency;
+        public float reproductionDrive;
+
+        public static EcologyGene CreateRandom(System.Random random)
+        {
+            return new EcologyGene
+            {
+                foragingDrive = GenomeRandom.Range(random, 0.25f, 1f),
+                predationDrive = GenomeRandom.Range(random, 0f, 1f),
+                defenseDrive = GenomeRandom.Range(random, 0.15f, 1f),
+                socialDrive = GenomeRandom.Range(random, 0f, 1f),
+                sensorRange = GenomeRandom.Range(random, 3f, 14f),
+                bodyProtection = GenomeRandom.Range(random, 0.05f, 1f),
+                energyEfficiency = GenomeRandom.Range(random, 0.45f, 1.5f),
+                reproductionDrive = GenomeRandom.Range(random, 0.25f, 1f)
+            };
+        }
+
+        public EcologyGene Clone()
+        {
+            return new EcologyGene
+            {
+                foragingDrive = foragingDrive,
+                predationDrive = predationDrive,
+                defenseDrive = defenseDrive,
+                socialDrive = socialDrive,
+                sensorRange = sensorRange,
+                bodyProtection = bodyProtection,
+                energyEfficiency = energyEfficiency,
+                reproductionDrive = reproductionDrive
+            };
+        }
+
+        public void Mutate(System.Random random, float mutationRate)
+        {
+            foragingDrive = MutateFloat(random, foragingDrive, mutationRate, 0.16f, 0f, 1f);
+            predationDrive = MutateFloat(random, predationDrive, mutationRate, 0.2f, 0f, 1f);
+            defenseDrive = MutateFloat(random, defenseDrive, mutationRate, 0.16f, 0f, 1f);
+            socialDrive = MutateFloat(random, socialDrive, mutationRate, 0.2f, 0f, 1f);
+            sensorRange = MutateFloat(random, sensorRange, mutationRate, 1.2f, 2f, 20f);
+            bodyProtection = MutateFloat(random, bodyProtection, mutationRate, 0.16f, 0f, 1f);
+            energyEfficiency = MutateFloat(random, energyEfficiency, mutationRate, 0.16f, 0.25f, 2f);
+            reproductionDrive = MutateFloat(random, reproductionDrive, mutationRate, 0.18f, 0f, 1f);
+        }
+
+        public void Repair()
+        {
+            // JsonUtility creates a zero-filled object when an older archive
+            // has no ecology block. Restore sensible neutral defaults before
+            // clamping so schema 1/2 genomes remain usable.
+            if (sensorRange < 0.01f
+                && energyEfficiency < 0.01f
+                && foragingDrive < 0.01f
+                && predationDrive < 0.01f
+                && defenseDrive < 0.01f
+                && socialDrive < 0.01f
+                && bodyProtection < 0.01f
+                && reproductionDrive < 0.01f)
+            {
+                foragingDrive = 0.6f;
+                predationDrive = 0.25f;
+                defenseDrive = 0.5f;
+                socialDrive = 0.35f;
+                sensorRange = 8f;
+                bodyProtection = 0.4f;
+                energyEfficiency = 1f;
+                reproductionDrive = 0.6f;
+            }
+
+            foragingDrive = Mathf.Clamp01(Safe(foragingDrive, 0.6f));
+            predationDrive = Mathf.Clamp01(Safe(predationDrive, 0.25f));
+            defenseDrive = Mathf.Clamp01(Safe(defenseDrive, 0.5f));
+            socialDrive = Mathf.Clamp01(Safe(socialDrive, 0.35f));
+            sensorRange = Mathf.Clamp(Safe(sensorRange, 8f), 2f, 20f);
+            bodyProtection = Mathf.Clamp01(Safe(bodyProtection, 0.4f));
+            energyEfficiency = Mathf.Clamp(Safe(energyEfficiency, 1f), 0.25f, 2f);
+            reproductionDrive = Mathf.Clamp01(Safe(reproductionDrive, 0.6f));
+        }
+
+        private static float MutateFloat(
+            System.Random random,
+            float value,
+            float mutationRate,
+            float step,
+            float min,
+            float max)
+        {
+            if (GenomeRandom.Chance(random, mutationRate))
+            {
+                value += GenomeRandom.Signed(random, step);
+            }
+
+            return Mathf.Clamp(value, min, max);
+        }
+
+        private static float Safe(float value, float fallback)
+        {
+            return float.IsNaN(value) || float.IsInfinity(value) ? fallback : value;
+        }
+    }
+
     [Serializable]
     public sealed class CreatureGenome
     {
-        public const int CurrentSchemaVersion = 2;
+        public const int CurrentSchemaVersion = 3;
         public const int MinBodyParts = 2;
-        public const int MaxBodyParts = 9;
+        public const int MaxBodyParts = 12;
 
         public int schemaVersion = CurrentSchemaVersion;
         public string genomeId = string.Empty;
@@ -170,6 +286,7 @@ namespace EvolutionLab
         public float mutationRate = 0.16f;
         public List<BodyPartGene> bodyParts = new List<BodyPartGene>();
         public BrainGene brain = new BrainGene();
+        public EcologyGene ecology = new EcologyGene();
 
         public int JointCount
         {
@@ -187,6 +304,7 @@ namespace EvolutionLab
                 generation = generation,
                 mutationRate = mutationRate,
                 brain = brain == null ? new BrainGene() : brain.Clone(),
+                ecology = ecology == null ? new EcologyGene() : ecology.Clone(),
                 bodyParts = new List<BodyPartGene>()
             };
 
@@ -209,7 +327,8 @@ namespace EvolutionLab
                 secondaryParentId = string.Empty,
                 mutationRate = GenomeRandom.Range(random, 0.10f, 0.22f),
                 bodyParts = new List<BodyPartGene>(),
-                brain = BrainGene.CreateRandom(random)
+                brain = BrainGene.CreateRandom(random),
+                ecology = EcologyGene.CreateRandom(random)
             };
 
             int partCount = random.Next(3, 7);
@@ -266,9 +385,24 @@ namespace EvolutionLab
             child.parentId = a.genomeId;
             child.secondaryParentId = b == null ? string.Empty : b.genomeId;
             child.generation = generation;
-            child.mutationRate = b == null
+                child.mutationRate = b == null
                 ? a.mutationRate
                 : Mathf.Lerp(a.mutationRate, b.mutationRate, 0.5f);
+
+            child.ecology = a.ecology == null
+                ? EcologyGene.CreateRandom(random)
+                : a.ecology.Clone();
+            if (b != null && b.ecology != null)
+            {
+                child.ecology.foragingDrive = Mathf.Lerp(child.ecology.foragingDrive, b.ecology.foragingDrive, 0.5f);
+                child.ecology.predationDrive = Mathf.Lerp(child.ecology.predationDrive, b.ecology.predationDrive, 0.5f);
+                child.ecology.defenseDrive = Mathf.Lerp(child.ecology.defenseDrive, b.ecology.defenseDrive, 0.5f);
+                child.ecology.socialDrive = Mathf.Lerp(child.ecology.socialDrive, b.ecology.socialDrive, 0.5f);
+                child.ecology.sensorRange = Mathf.Lerp(child.ecology.sensorRange, b.ecology.sensorRange, 0.5f);
+                child.ecology.bodyProtection = Mathf.Lerp(child.ecology.bodyProtection, b.ecology.bodyProtection, 0.5f);
+                child.ecology.energyEfficiency = Mathf.Lerp(child.ecology.energyEfficiency, b.ecology.energyEfficiency, 0.5f);
+                child.ecology.reproductionDrive = Mathf.Lerp(child.ecology.reproductionDrive, b.ecology.reproductionDrive, 0.5f);
+            }
 
             if (b != null && b.bodyParts != null)
             {
@@ -391,6 +525,8 @@ namespace EvolutionLab
 
             brain = brain ?? new BrainGene();
             brain.Mutate(random, mutationRate);
+            ecology = ecology ?? EcologyGene.CreateRandom(random);
+            ecology.Mutate(random, mutationRate);
             Repair();
         }
 
@@ -400,6 +536,8 @@ namespace EvolutionLab
             bodyParts = bodyParts ?? new List<BodyPartGene>();
             brain = brain ?? new BrainGene();
             brain.EnsureShape();
+            ecology = ecology ?? new EcologyGene();
+            ecology.Repair();
 
             if (bodyParts.Count == 0)
             {

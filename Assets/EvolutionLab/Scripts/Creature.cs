@@ -47,6 +47,13 @@ namespace EvolutionLab
         private bool selected;
         private string deathReason = string.Empty;
         private Func<Vector3, Vector3> resourcePositionProvider;
+        private Func<Vector3, CreatureInteractionObservation> interactionObservationProvider;
+        private float interactionIntent;
+        private float reproductionIntent;
+        private float socialIntent;
+        private float foragingIntent;
+        private float damageTaken;
+        private int killCount;
 
         public event Action<Creature> Clicked;
 
@@ -79,14 +86,83 @@ namespace EvolutionLab
 
         public float TotalEnergyAcquired { get { return totalEnergyAcquired; } }
 
+        public int KillCount { get { return killCount; } }
+
+        public float DamageTaken { get { return damageTaken; } }
+
+        public float InteractionIntent { get { return interactionIntent; } }
+
+        public float ReproductionIntent { get { return reproductionIntent; } }
+
+        public float SocialIntent { get { return socialIntent; } }
+
+        public float ForagingIntent { get { return foragingIntent; } }
+
+        public float BodyMass
+        {
+            get
+            {
+                float total = 0f;
+                for (int i = 0; i < bodyParts.Count; i++)
+                {
+                    if (bodyParts[i] != null && IsFinite(bodyParts[i].mass))
+                    {
+                        total += Mathf.Max(0f, bodyParts[i].mass);
+                    }
+                }
+
+                return Mathf.Max(0.1f, total);
+            }
+        }
+
+        /// <summary>
+        /// A post-hoc observation label for the catalogue/UI. It is derived
+        /// from continuous traits and current controller output, not used as
+        /// a gameplay class or a hard-coded species role.
+        /// </summary>
+        public string EcologicalTendency
+        {
+            get
+            {
+                EcologyGene ecology = Genome == null ? null : Genome.ecology;
+                if (ecology == null)
+                {
+                    return "undetermined";
+                }
+
+                float predatory = ecology.predationDrive * (0.35f + interactionIntent);
+                float defensive = ecology.defenseDrive * (1.1f - Mathf.Clamp01(interactionIntent));
+                float social = ecology.socialDrive * (0.35f + socialIntent);
+                float foraging = ecology.foragingDrive * (0.35f + foragingIntent);
+                if (predatory >= defensive && predatory >= social && predatory >= foraging)
+                {
+                    return "interacting / pursuing";
+                }
+
+                if (defensive >= social && defensive >= foraging)
+                {
+                    return "defensive / evasive";
+                }
+
+                if (social >= foraging)
+                {
+                    return "social / clustering";
+                }
+
+                return "resource-oriented";
+            }
+        }
+
         public bool CanReproduce
         {
             get
             {
+                EcologyGene ecology = Genome == null ? null : Genome.ecology;
+                float drive = ecology == null ? 0.6f : ecology.reproductionDrive;
                 return alive
                     && lifeAgeSeconds >= maturityAgeSeconds
                     && reproductionCooldownRemaining <= 0f
-                    && energy >= reproductionEnergyThreshold;
+                    && energy >= reproductionEnergyThreshold * Mathf.Lerp(1.15f, 0.82f, drive);
             }
         }
 
@@ -108,8 +184,10 @@ namespace EvolutionLab
                     0f,
                     lifeAgeSeconds
                     + offspringCount * 30f
+                    + killCount * 36f
                     + energy * 0.1f
-                    + CurrentDistance * 0.2f);
+                    + CurrentDistance * 0.2f
+                    + totalEnergyAcquired * 0.03f);
             }
         }
 
@@ -131,7 +209,7 @@ namespace EvolutionLab
             float initialDamping,
             float initialSettlingDuration)
         {
-            Genome = genome;
+            Genome = genome == null ? new CreatureGenome() : genome.Clone();
             bodyParts.Clear();
             joints.Clear();
             renderers.Clear();
@@ -157,9 +235,9 @@ namespace EvolutionLab
                 colliders.AddRange(bodyColliders);
             }
 
-            partGenes = genome == null || genome.bodyParts == null
+            partGenes = Genome == null || Genome.bodyParts == null
                 ? Array.Empty<BodyPartGene>()
-                : genome.bodyParts.ToArray();
+                : Genome.bodyParts.ToArray();
             safePositions = new Vector3[bodyParts.Count];
             safeRotations = new Quaternion[bodyParts.Count];
             for (int i = 0; i < bodyParts.Count; i++)
@@ -180,7 +258,7 @@ namespace EvolutionLab
                     : Quaternion.Inverse(joint.connectedBody.rotation) * joint.transform.rotation;
             }
 
-            brain = new Brain(genome == null ? null : genome.brain);
+            brain = new Brain(Genome == null ? null : Genome.brain);
             rootBody = bodyParts.Count > 0 ? bodyParts[0] : null;
             bodyMaterial = material;
             baseColor = color;
@@ -192,6 +270,12 @@ namespace EvolutionLab
             SetSelected(false);
             alive = false;
             deathReason = string.Empty;
+            interactionIntent = 0f;
+            reproductionIntent = 0f;
+            socialIntent = 0f;
+            foragingIntent = 0f;
+            damageTaken = 0f;
+            killCount = 0;
         }
 
         public void ConfigureLife(
@@ -222,7 +306,57 @@ namespace EvolutionLab
             totalEnergyAcquired = 0f;
             offspringCount = 0;
             deathReason = string.Empty;
+            damageTaken = 0f;
+            killCount = 0;
+            interactionIntent = 0f;
+            reproductionIntent = 0f;
+            socialIntent = 0f;
+            foragingIntent = 0f;
             alive = true;
+        }
+
+        public void RestoreLifeState(
+            float restoredEnergy,
+            float restoredAge,
+            int restoredOffspringCount,
+            int restoredKillCount,
+            float restoredDamageTaken)
+        {
+            energy = Mathf.Clamp(restoredEnergy, 0f, maxEnergy);
+            lifeAgeSeconds = Mathf.Clamp(restoredAge, 0f, maxAgeSeconds);
+            offspringCount = Mathf.Max(0, restoredOffspringCount);
+            killCount = Mathf.Max(0, restoredKillCount);
+            damageTaken = Mathf.Max(0f, restoredDamageTaken);
+            reproductionCooldownRemaining = 0f;
+            deathReason = string.Empty;
+            alive = true;
+            evaluationActive = true;
+        }
+
+        public void RestorePose(Vector3 position, Quaternion rotation)
+        {
+            if (rootBody == null || !IsFinite(position))
+            {
+                return;
+            }
+
+            Quaternion deltaRotation = rotation * Quaternion.Inverse(rootBody.rotation);
+            Vector3 oldRootPosition = rootBody.position;
+            for (int i = 0; i < bodyParts.Count; i++)
+            {
+                Rigidbody bodyPart = bodyParts[i];
+                if (bodyPart == null)
+                {
+                    continue;
+                }
+
+                bodyPart.position = position + deltaRotation * (bodyPart.position - oldRootPosition);
+                bodyPart.rotation = deltaRotation * bodyPart.rotation;
+                bodyPart.linearVelocity = Vector3.zero;
+                bodyPart.angularVelocity = Vector3.zero;
+            }
+
+            Physics.SyncTransforms();
         }
 
         public void SetLifeTuning(
@@ -249,6 +383,11 @@ namespace EvolutionLab
             resourcePositionProvider = provider;
         }
 
+        public void SetInteractionSensor(Func<Vector3, CreatureInteractionObservation> provider)
+        {
+            interactionObservationProvider = provider;
+        }
+
         public void TickLife(float deltaTime, float energyGained)
         {
             if (!alive || deltaTime <= 0f)
@@ -263,7 +402,10 @@ namespace EvolutionLab
             float speed = rootBody == null || !IsFinite(rootBody.linearVelocity)
                 ? 0f
                 : rootBody.linearVelocity.magnitude;
-            float energySpent = (metabolismPerSecond + speed * movementEnergyCost) * deltaTime;
+            float efficiency = Genome == null || Genome.ecology == null
+                ? 1f
+                : Mathf.Max(0.25f, Genome.ecology.energyEfficiency);
+            float energySpent = (metabolismPerSecond + speed * movementEnergyCost) * deltaTime / efficiency;
             float safeEnergyGained = Mathf.Max(0f, IsFinite(energyGained) ? energyGained : 0f);
             energy = Mathf.Clamp(energy + safeEnergyGained - energySpent, 0f, maxEnergy);
             totalEnergyAcquired += safeEnergyGained;
@@ -289,6 +431,42 @@ namespace EvolutionLab
             reproductionCooldownRemaining = reproductionCooldownSeconds;
             offspringCount++;
             return true;
+        }
+
+        public float ApplyDamage(float amount, string reason)
+        {
+            if (!alive || amount <= 0f || !IsFinite(amount))
+            {
+                return 0f;
+            }
+
+            float applied = Mathf.Min(energy, amount);
+            energy = Mathf.Max(0f, energy - applied);
+            damageTaken += applied;
+            if (energy <= 0.001f)
+            {
+                Die(string.IsNullOrEmpty(reason) ? "Interaction" : reason);
+            }
+
+            return applied;
+        }
+
+        public void AddEnergy(float amount)
+        {
+            if (!alive || amount <= 0f || !IsFinite(amount))
+            {
+                return;
+            }
+
+            energy = Mathf.Clamp(energy + amount, 0f, maxEnergy);
+        }
+
+        public void RegisterKill()
+        {
+            if (alive)
+            {
+                killCount++;
+            }
         }
 
         public void Die(string reason)
@@ -412,7 +590,8 @@ namespace EvolutionLab
                 lifeAgeSeconds,
                 offspringCount,
                 deathReason,
-                alive);
+                alive)
+                .WithCombatStats(killCount, damageTaken);
         }
 
         public void SetSelected(bool value)
@@ -456,6 +635,18 @@ namespace EvolutionLab
 
             float[] observations = BuildObservations();
             float[] outputs = brain.Evaluate(observations);
+            interactionIntent = outputs.Length > 8
+                ? Mathf.Clamp01((outputs[8] + 1f) * 0.5f)
+                : 0f;
+            reproductionIntent = outputs.Length > 9
+                ? Mathf.Clamp01((outputs[9] + 1f) * 0.5f)
+                : 0f;
+            socialIntent = outputs.Length > 10
+                ? Mathf.Clamp01((outputs[10] + 1f) * 0.5f)
+                : 0f;
+            foragingIntent = outputs.Length > 11
+                ? Mathf.Clamp01((outputs[11] + 1f) * 0.5f)
+                : 0f;
             for (int i = 0; i < joints.Count && i < outputs.Length; i++)
             {
                 ConfigurableJoint joint = joints[i];
@@ -580,6 +771,18 @@ namespace EvolutionLab
                 }
             }
 
+            CreatureInteractionObservation interaction = interactionObservationProvider == null
+                ? CreatureInteractionObservation.Empty
+                : interactionObservationProvider(rootBody.position);
+            Vector3 localIndividualDirection = ToLocalDirection(interaction.nearestIndividualDirection);
+            Vector3 localThreatDirection = ToLocalDirection(interaction.nearestThreatDirection);
+            float sensorRange = Genome == null || Genome.ecology == null
+                ? 8f
+                : Mathf.Max(2f, Genome.ecology.sensorRange);
+            float individualProximity = Proximity(interaction.nearestIndividualDistance, sensorRange);
+            float threatProximity = Proximity(interaction.nearestThreatDistance, sensorRange);
+            EcologyGene ecology = Genome == null ? null : Genome.ecology;
+
             return new[]
             {
                 SafeClamp(velocity.x / 4f, -1f, 1f),
@@ -595,8 +798,36 @@ namespace EvolutionLab
                 EnergyRatio * 2f - 1f,
                 SafeClamp(localResourceDirection.x, -1f, 1f),
                 SafeClamp(localResourceDirection.z, -1f, 1f),
-                resourceProximity * 2f - 1f
+                resourceProximity * 2f - 1f,
+                SafeClamp(localIndividualDirection.x, -1f, 1f),
+                SafeClamp(localIndividualDirection.z, -1f, 1f),
+                individualProximity * 2f - 1f,
+                SafeClamp(localThreatDirection.x, -1f, 1f),
+                SafeClamp(localThreatDirection.z, -1f, 1f),
+                threatProximity * 2f - 1f,
+                SafeClamp(interaction.obstacleProximity * 2f - 1f, -1f, 1f),
+                ecology == null ? -1f : ecology.predationDrive * 2f - 1f
             };
+        }
+
+        private Vector3 ToLocalDirection(Vector3 worldDirection)
+        {
+            if (!IsFinite(worldDirection) || worldDirection.sqrMagnitude < 0.0001f || rootBody == null)
+            {
+                return Vector3.zero;
+            }
+
+            return rootBody.transform.InverseTransformDirection(worldDirection.normalized);
+        }
+
+        private static float Proximity(float distance, float range)
+        {
+            if (!IsFinite(distance) || distance <= 0f)
+            {
+                return distance <= 0f ? 1f : 0f;
+            }
+
+            return Mathf.Clamp01(1f - distance / Mathf.Max(0.1f, range));
         }
 
         private float EstimateJointAngle(int index)

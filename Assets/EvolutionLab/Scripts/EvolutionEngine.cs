@@ -13,6 +13,8 @@ namespace EvolutionLab
         public float energy;
         public float age;
         public int offspringCount;
+        public int killCount;
+        public float damageTaken;
         public string deathReason = string.Empty;
         public bool alive;
 
@@ -43,6 +45,13 @@ namespace EvolutionLab
             this.deathReason = deathReason ?? string.Empty;
             this.alive = alive;
         }
+
+        public CreatureEvaluationResult WithCombatStats(int kills, float damage)
+        {
+            killCount = Mathf.Max(0, kills);
+            damageTaken = Mathf.Max(0f, damage);
+            return this;
+        }
     }
 
     [Serializable]
@@ -55,6 +64,8 @@ namespace EvolutionLab
         public string bestGenomeId = string.Empty;
         public int births;
         public int deaths;
+        public int predations;
+        public int interactions;
         public float averageEnergy;
         public float averageAge;
 
@@ -69,6 +80,8 @@ namespace EvolutionLab
                 bestGenomeId = bestGenomeId,
                 births = births,
                 deaths = deaths,
+                predations = predations,
+                interactions = interactions,
                 averageEnergy = averageEnergy,
                 averageAge = averageAge
             };
@@ -85,6 +98,8 @@ namespace EvolutionLab
         public string bestGenomeId = string.Empty;
         public int births;
         public int deaths;
+        public int predations;
+        public int interactions;
         public float averageEnergy;
         public float averageAge;
 
@@ -99,6 +114,8 @@ namespace EvolutionLab
                 bestGenomeId = bestGenomeId,
                 births = births,
                 deaths = deaths,
+                predations = predations,
+                interactions = interactions,
                 averageEnergy = averageEnergy,
                 averageAge = averageAge
             };
@@ -120,6 +137,9 @@ namespace EvolutionLab
         public float energy;
         public float age;
         public int offspringCount;
+        public int killCount;
+        public float damageTaken;
+        public int deathGeneration;
         public string deathReason = string.Empty;
         public bool wasAlive;
         public CreatureGenome genome;
@@ -133,31 +153,38 @@ namespace EvolutionLab
             float recordedAge = 0f,
             int recordedOffspringCount = 0,
             string recordedDeathReason = "",
-            bool recordedAlive = true)
+            bool recordedAlive = true,
+            int recordedKillCount = 0,
+            float recordedDamageTaken = 0f,
+            int recordedDeathGeneration = 0)
         {
             if (source == null)
             {
                 return null;
             }
 
-            source.Repair();
+            CreatureGenome snapshot = source.Clone();
+            snapshot.Repair();
             return new IndividualHistoryRecord
             {
-                genomeId = source.genomeId,
-                parentId = source.parentId,
-                secondaryParentId = source.secondaryParentId,
-                generation = source.generation,
+                genomeId = snapshot.genomeId,
+                parentId = snapshot.parentId,
+                secondaryParentId = snapshot.secondaryParentId,
+                generation = snapshot.generation,
                 fitness = recordedFitness,
                 distance = recordedDistance,
-                bodyPartCount = source.bodyParts == null ? 0 : source.bodyParts.Count,
-                jointCount = source.JointCount,
+                bodyPartCount = snapshot.bodyParts == null ? 0 : snapshot.bodyParts.Count,
+                jointCount = snapshot.JointCount,
                 hasFitness = includeFitness,
                 energy = recordedEnergy,
                 age = recordedAge,
                 offspringCount = recordedOffspringCount,
+                killCount = recordedKillCount,
+                damageTaken = recordedDamageTaken,
+                deathGeneration = recordedDeathGeneration,
                 deathReason = recordedDeathReason ?? string.Empty,
                 wasAlive = recordedAlive,
-                genome = source.Clone()
+                genome = snapshot
             };
         }
     }
@@ -167,6 +194,8 @@ namespace EvolutionLab
     {
         public List<GenerationRecord> generations = new List<GenerationRecord>();
         public List<IndividualHistoryRecord> individuals = new List<IndividualHistoryRecord>();
+        public List<EvolutionEventRecord> events = new List<EvolutionEventRecord>();
+        public int currentCycle;
     }
 
     [Serializable]
@@ -181,6 +210,12 @@ namespace EvolutionLab
         [SerializeField]
         private List<IndividualHistoryRecord> individuals = new List<IndividualHistoryRecord>();
 
+        [SerializeField]
+        private List<EvolutionEventRecord> events = new List<EvolutionEventRecord>();
+
+        [SerializeField]
+        private int currentCycle;
+
         private Dictionary<string, IndividualHistoryRecord> individualById;
 
         public IReadOnlyList<GenerationRecord> Generations
@@ -191,6 +226,21 @@ namespace EvolutionLab
         public IReadOnlyList<IndividualHistoryRecord> Individuals
         {
             get { return individuals; }
+        }
+
+        public IReadOnlyList<EvolutionEventRecord> Events
+        {
+            get { return events; }
+        }
+
+        public int CurrentCycle
+        {
+            get { return currentCycle; }
+        }
+
+        public NaturalHistoryCatalog NaturalHistory
+        {
+            get { return NaturalHistoryCatalog.Build(individuals); }
         }
 
         public string ToJson()
@@ -213,6 +263,16 @@ namespace EvolutionLab
                     archive.individuals.Add(record);
                 }
             }
+
+            for (int i = 0; i < events.Count; i++)
+            {
+                if (events[i] != null)
+                {
+                    archive.events.Add(events[i].Clone());
+                }
+            }
+
+            archive.currentCycle = currentCycle;
 
             return JsonUtility.ToJson(archive, true);
         }
@@ -259,6 +319,20 @@ namespace EvolutionLab
                 }
             }
 
+            events = new List<EvolutionEventRecord>();
+            if (archive.events != null)
+            {
+                for (int i = 0; i < archive.events.Count; i++)
+                {
+                    if (archive.events[i] != null)
+                    {
+                        events.Add(archive.events[i].Clone());
+                    }
+                }
+            }
+
+            currentCycle = Mathf.Max(0, archive.currentCycle);
+
             while (generations.Count > MaxGenerationRecords)
             {
                 generations.RemoveAt(0);
@@ -290,14 +364,48 @@ namespace EvolutionLab
                 bestGenomeId = report.bestGenomeId,
                 births = report.births,
                 deaths = report.deaths,
+                predations = report.predations,
+                interactions = report.interactions,
                 averageEnergy = report.averageEnergy,
                 averageAge = report.averageAge
             });
+
+            currentCycle++;
 
             // History is intentionally bounded so a long observation run does not grow forever.
             if (generations.Count > MaxGenerationRecords)
             {
                 generations.RemoveAt(0);
+            }
+        }
+
+        public void RecordEvent(
+            EvolutionEventType type,
+            int generation,
+            string subjectId,
+            string relatedId,
+            string message,
+            float value = 0f)
+        {
+            if (events == null)
+            {
+                events = new List<EvolutionEventRecord>();
+            }
+
+            events.Add(new EvolutionEventRecord
+            {
+                cycle = currentCycle,
+                generation = generation,
+                type = type,
+                subjectId = subjectId ?? string.Empty,
+                relatedId = relatedId ?? string.Empty,
+                message = message ?? string.Empty,
+                value = value
+            });
+
+            while (events.Count > 4096)
+            {
+                events.RemoveAt(0);
             }
         }
 
@@ -338,7 +446,10 @@ namespace EvolutionLab
                     result.age,
                     result.offspringCount,
                     result.deathReason,
-                    result.alive);
+                    result.alive,
+                    result.killCount,
+                    result.damageTaken,
+                    result.alive ? 0 : result.genome.generation);
             }
         }
 
@@ -408,6 +519,44 @@ namespace EvolutionLab
             return ancestry;
         }
 
+        public List<IndividualHistoryRecord> GetDescendants(string genomeId, int maxRecords)
+        {
+            var descendants = new List<IndividualHistoryRecord>();
+            if (string.IsNullOrEmpty(genomeId) || maxRecords <= 0)
+            {
+                return descendants;
+            }
+
+            var frontier = new Queue<string>();
+            var visited = new HashSet<string>();
+            frontier.Enqueue(genomeId);
+            visited.Add(genomeId);
+            while (frontier.Count > 0 && descendants.Count < maxRecords)
+            {
+                string ancestorId = frontier.Dequeue();
+                for (int i = 0; i < individuals.Count && descendants.Count < maxRecords; i++)
+                {
+                    IndividualHistoryRecord record = individuals[i];
+                    if (record == null || string.IsNullOrEmpty(record.genomeId)
+                        || visited.Contains(record.genomeId))
+                    {
+                        continue;
+                    }
+
+                    if (record.parentId != ancestorId && record.secondaryParentId != ancestorId)
+                    {
+                        continue;
+                    }
+
+                    visited.Add(record.genomeId);
+                    descendants.Add(record);
+                    frontier.Enqueue(record.genomeId);
+                }
+            }
+
+            return descendants;
+        }
+
         private void RegisterGenome(
             CreatureGenome source,
             float recordedFitness,
@@ -417,7 +566,10 @@ namespace EvolutionLab
             float recordedAge = 0f,
             int recordedOffspringCount = 0,
             string recordedDeathReason = "",
-            bool recordedAlive = true)
+            bool recordedAlive = true,
+            int recordedKillCount = 0,
+            float recordedDamageTaken = 0f,
+            int recordedDeathGeneration = 0)
         {
             if (source == null || string.IsNullOrEmpty(source.genomeId))
             {
@@ -441,8 +593,21 @@ namespace EvolutionLab
                     existing.energy = recordedEnergy;
                     existing.age = recordedAge;
                     existing.offspringCount = recordedOffspringCount;
+                    existing.killCount = recordedKillCount;
+                    existing.damageTaken = recordedDamageTaken;
+                    if (!recordedAlive)
+                    {
+                        existing.deathGeneration = recordedDeathGeneration <= 0
+                            ? source.generation
+                            : recordedDeathGeneration;
+                    }
                     existing.deathReason = recordedDeathReason ?? string.Empty;
                     existing.wasAlive = recordedAlive;
+                }
+                else
+                {
+                    existing.wasAlive = true;
+                    existing.deathReason = string.Empty;
                 }
 
                 return;
@@ -457,7 +622,10 @@ namespace EvolutionLab
                 recordedAge,
                 recordedOffspringCount,
                 recordedDeathReason,
-                recordedAlive);
+                recordedAlive,
+                recordedKillCount,
+                recordedDamageTaken,
+                recordedDeathGeneration);
             if (record == null)
             {
                 return;
@@ -520,6 +688,9 @@ namespace EvolutionLab
                 energy = source.energy,
                 age = source.age,
                 offspringCount = source.offspringCount,
+                killCount = source.killCount,
+                damageTaken = source.damageTaken,
+                deathGeneration = source.deathGeneration,
                 deathReason = source.deathReason,
                 wasAlive = source.wasAlive,
                 genome = source.genome.Clone()
@@ -676,10 +847,36 @@ namespace EvolutionLab
             }
         }
 
+        public void RestorePopulation(IReadOnlyList<CreatureGenome> genomes, int generation)
+        {
+            CurrentPopulation.Clear();
+            Generation = Mathf.Max(1, generation);
+            if (genomes == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < genomes.Count; i++)
+            {
+                if (genomes[i] == null)
+                {
+                    continue;
+                }
+
+                CreatureGenome restored = genomes[i].Clone();
+                restored.Repair();
+                CurrentPopulation.Add(restored);
+            }
+
+            History.RegisterPopulation(CurrentPopulation);
+        }
+
         public void RecordEcologyCycle(
             IReadOnlyList<CreatureEvaluationResult> results,
             int births,
-            int deaths)
+            int deaths,
+            int predations = 0,
+            int interactions = 0)
         {
             var observed = new List<CreatureEvaluationResult>();
             if (results != null)
@@ -697,6 +894,8 @@ namespace EvolutionLab
             LastReport = BuildReport(observed);
             LastReport.births = Mathf.Max(0, births);
             LastReport.deaths = Mathf.Max(0, deaths);
+            LastReport.predations = Mathf.Max(0, predations);
+            LastReport.interactions = Mathf.Max(0, interactions);
             History.Record(LastReport);
             History.RecordIndividuals(observed);
             Generation++;
@@ -768,6 +967,16 @@ namespace EvolutionLab
 
         private CreatureGenome PickParent(List<CreatureEvaluationResult> ranked)
         {
+            if (ranked == null || ranked.Count == 0)
+            {
+                return null;
+            }
+
+            if (ranked.Count == 1)
+            {
+                return ranked[0].genome;
+            }
+
             int selectionPool = Mathf.Clamp(ranked.Count / 2, 2, ranked.Count);
             int totalWeight = selectionPool * (selectionPool + 1) / 2;
             int roll = random.Next(0, Mathf.Max(1, totalWeight));

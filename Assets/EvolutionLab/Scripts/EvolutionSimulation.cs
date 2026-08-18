@@ -6,11 +6,11 @@ using UnityEngine.InputSystem;
 namespace EvolutionLab
 {
     /// <summary>
-    /// Scene-facing coordinator for the Prototype 2 ecological evolution experiment.
+    /// Scene-facing coordinator for the Final artificial-life observation world.
     /// </summary>
     public sealed class EvolutionSimulation : MonoBehaviour
     {
-        [Header("Prototype 2 settings")]
+        [Header("Final world settings")]
         [SerializeField] private int populationSize = 24;
         [SerializeField] private float generationDuration = 20f;
         [SerializeField] private int randomSeed = 172903;
@@ -34,6 +34,11 @@ namespace EvolutionLab
         [SerializeField] private float reproductionCooldownSeconds = 8f;
         [SerializeField] private float reproductionRadius = 3.5f;
 
+        [Header("Emergent interactions")]
+        [SerializeField] private bool enableEcologicalInteractions = true;
+        [SerializeField] private bool preserveInterCreaturePhysicsIsolation = true;
+        [SerializeField] private float interactionDamageMultiplier = 1f;
+
         [Header("Physics tuning")]
         [SerializeField] private float jointDriveForce = 110f;
         [SerializeField] private float jointTargetSpeedDegrees = 240f;
@@ -43,6 +48,7 @@ namespace EvolutionLab
         private readonly List<Creature> creatures = new List<Creature>();
         private EvolutionEngine engine;
         private EnvironmentController environment;
+        private EcologyInteractionSystem interactionSystem;
         private EvolutionLabUI ui;
         private Camera mainCamera;
         private FreeCameraController freeCamera;
@@ -62,8 +68,11 @@ namespace EvolutionLab
         private int ancestryCursor;
         private string historyStatus = string.Empty;
         private string historyArchivePath;
+        private string worldArchivePath;
         private int birthsThisCycle;
         private int deathsThisCycle;
+        private int interactionsThisCycle;
+        private int predationsThisCycle;
         private string ecologyStatus = "Population is adapting to the environment.";
 
         public int Generation
@@ -101,6 +110,16 @@ namespace EvolutionLab
             get { return deathsThisCycle; }
         }
 
+        public int InteractionsThisCycle
+        {
+            get { return interactionsThisCycle; }
+        }
+
+        public int PredationsThisCycle
+        {
+            get { return predationsThisCycle; }
+        }
+
         public float AverageEnergy
         {
             get
@@ -133,6 +152,11 @@ namespace EvolutionLab
             get { return environment == null ? resourceCount : environment.ResourceCount; }
         }
 
+        public int EnvironmentFeatureCount
+        {
+            get { return environment == null ? 0 : environment.FeatureCount; }
+        }
+
         public float MetabolismPerSecond
         {
             get { return metabolismPerSecond; }
@@ -153,6 +177,60 @@ namespace EvolutionLab
             get { return ecologyStatus; }
         }
 
+        public IReadOnlyList<EvolutionEventRecord> EvolutionEvents
+        {
+            get { return engine == null || engine.History == null ? null : engine.History.Events; }
+        }
+
+        public IReadOnlyList<LineageSummary> LineageSummaries
+        {
+            get
+            {
+                if (engine == null || engine.History == null)
+                {
+                    return null;
+                }
+
+                return engine.History.NaturalHistory.Lineages;
+            }
+        }
+
+        public IReadOnlyList<SpeciesSummary> SpeciesSummaries
+        {
+            get
+            {
+                if (engine == null || engine.History == null)
+                {
+                    return null;
+                }
+
+                return engine.History.NaturalHistory.Species;
+            }
+        }
+
+        public int ExtinctLineageCount
+        {
+            get
+            {
+                IReadOnlyList<LineageSummary> summaries = LineageSummaries;
+                if (summaries == null)
+                {
+                    return 0;
+                }
+
+                int count = 0;
+                for (int i = 0; i < summaries.Count; i++)
+                {
+                    if (summaries[i] != null && summaries[i].extinct)
+                    {
+                        count++;
+                    }
+                }
+
+                return count;
+            }
+        }
+
         public IReadOnlyList<GenerationRecord> GenerationHistory
         {
             get { return engine == null || engine.History == null ? null : engine.History.Generations; }
@@ -166,6 +244,19 @@ namespace EvolutionLab
         public int AncestryCursor
         {
             get { return ancestryCursor; }
+        }
+
+        public int SelectedDescendantCount
+        {
+            get
+            {
+                if (engine == null || engine.History == null || selectedCreature == null || selectedCreature.Genome == null)
+                {
+                    return 0;
+                }
+
+                return engine.History.GetDescendants(selectedCreature.Genome.genomeId, 256).Count;
+            }
         }
 
         public string HistoryStatus
@@ -211,6 +302,21 @@ namespace EvolutionLab
         public float SimulationSpeed
         {
             get { return simulationSpeed; }
+        }
+
+        public bool EcologicalInteractionsEnabled
+        {
+            get { return enableEcologicalInteractions; }
+        }
+
+        public bool InterCreaturePhysicsIsolationEnabled
+        {
+            get { return preserveInterCreaturePhysicsIsolation; }
+        }
+
+        public float InteractionDamageMultiplier
+        {
+            get { return interactionDamageMultiplier; }
         }
 
         public string SpeedLabel
@@ -259,6 +365,7 @@ namespace EvolutionLab
             paused = false;
             simulationSpeed = 1f;
             historyArchivePath = Path.Combine(Application.persistentDataPath, "EvolutionLabHistory.json");
+            worldArchivePath = Path.Combine(Application.persistentDataPath, "EvolutionLabWorld.json");
 
             populationSize = Mathf.Clamp(populationSize, 4, 64);
             generationDuration = Mathf.Clamp(generationDuration, 4f, 120f);
@@ -279,6 +386,7 @@ namespace EvolutionLab
             reproductionCost = Mathf.Clamp(reproductionCost, 1f, maxEnergy);
             reproductionCooldownSeconds = Mathf.Clamp(reproductionCooldownSeconds, 0f, 120f);
             reproductionRadius = Mathf.Clamp(reproductionRadius, 0.5f, 20f);
+            interactionDamageMultiplier = Mathf.Clamp(interactionDamageMultiplier, 0f, 4f);
             jointDriveForce = Mathf.Clamp(jointDriveForce, 10f, 500f);
             jointTargetSpeedDegrees = Mathf.Clamp(jointTargetSpeedDegrees, 20f, 720f);
             jointDamping = Mathf.Clamp(jointDamping, 0f, 60f);
@@ -294,6 +402,7 @@ namespace EvolutionLab
             ConfigureCamera();
 
             engine = new EvolutionEngine(populationSize, randomSeed);
+            interactionSystem = new EcologyInteractionSystem();
             engine.Initialize();
             ui = gameObject.AddComponent<EvolutionLabUI>();
             ui.Bind(this);
@@ -360,11 +469,32 @@ namespace EvolutionLab
                 }
             }
 
+            if (enableEcologicalInteractions && interactionSystem != null)
+            {
+                interactionSystem.Tick(creatures, deltaTime * interactionDamageMultiplier);
+                interactionsThisCycle += interactionSystem.InteractionCount;
+                predationsThisCycle += interactionSystem.PredationCount;
+                RecordInteractionEvents(interactionSystem.Events);
+            }
+
+            // Interaction damage can kill an individual after the energy pass.
+            // Collect those deaths before reproduction removes or adds bodies.
+            for (int i = 0; i < creatures.Count; i++)
+            {
+                Creature creature = creatures[i];
+                if (creature != null && !creature.IsAlive && !pendingDeaths.Contains(creature))
+                {
+                    pendingDeaths.Add(creature);
+                }
+            }
+
             ProcessDeaths();
             ProcessReproduction();
             ecologyStatus = creatures.Count == 0
                 ? "Population extinct. Reset the experiment to start a new world."
-                : "Resources shape survival and reproduction.";
+                : enableEcologicalInteractions
+                    ? "Resources, encounters, and inherited traits shape survival."
+                    : "Resources shape survival and reproduction.";
         }
 
         public void TogglePause()
@@ -380,6 +510,22 @@ namespace EvolutionLab
             {
                 Time.timeScale = simulationSpeed;
             }
+        }
+
+        public void ToggleEcologicalInteractions()
+        {
+            enableEcologicalInteractions = !enableEcologicalInteractions;
+        }
+
+        public void ToggleInterCreaturePhysicsIsolation()
+        {
+            preserveInterCreaturePhysicsIsolation = !preserveInterCreaturePhysicsIsolation;
+            IgnoreCrossCreatureCollisions();
+        }
+
+        public void AdjustInteractionDamageMultiplier(float amount)
+        {
+            interactionDamageMultiplier = Mathf.Clamp(interactionDamageMultiplier + amount, 0f, 4f);
         }
 
         public void SetGenerationDuration(float duration)
@@ -512,6 +658,18 @@ namespace EvolutionLab
                 return;
             }
 
+            PreviewHistoryGenome(record.genomeId);
+        }
+
+        public void PreviewHistoryGenome(string genomeId)
+        {
+            if (engine == null || engine.History == null || string.IsNullOrEmpty(genomeId)
+                || !engine.History.TryGetIndividual(genomeId, out IndividualHistoryRecord record)
+                || record == null || record.genome == null)
+            {
+                return;
+            }
+
             DestroyHistoryPreview();
             previewCreature = CreatureBuilder.Build(
                 record.genome,
@@ -584,6 +742,108 @@ namespace EvolutionLab
             }
         }
 
+        public void SaveWorldSnapshot()
+        {
+            if (engine == null || engine.History == null)
+            {
+                return;
+            }
+
+            try
+            {
+                var archive = new WorldSnapshotArchive
+                {
+                    generation = Generation,
+                    evaluationElapsed = evaluationElapsed,
+                    historyJson = engine.History.ToJson()
+                };
+
+                for (int i = 0; i < engine.CurrentPopulation.Count; i++)
+                {
+                    if (engine.CurrentPopulation[i] != null)
+                    {
+                        archive.population.Add(engine.CurrentPopulation[i].Clone());
+                    }
+                }
+
+                for (int i = 0; i < creatures.Count; i++)
+                {
+                    Creature creature = creatures[i];
+                    if (creature == null || creature.Genome == null || creature.RootBody == null)
+                    {
+                        continue;
+                    }
+
+                    archive.creatures.Add(new WorldCreatureSnapshot
+                    {
+                        genomeId = creature.Genome.genomeId,
+                        position = creature.RootBody.position,
+                        rotation = creature.RootBody.rotation,
+                        energy = creature.Energy,
+                        age = creature.AgeSeconds,
+                        offspringCount = creature.OffspringCount,
+                        killCount = creature.KillCount,
+                        damageTaken = creature.DamageTaken
+                    });
+                }
+
+                Directory.CreateDirectory(Application.persistentDataPath);
+                File.WriteAllText(worldArchivePath, JsonUtility.ToJson(archive, true));
+                historyStatus = "Saved live world with " + archive.population.Count + " individuals.";
+            }
+            catch (System.Exception exception)
+            {
+                historyStatus = "World save failed: " + exception.Message;
+            }
+        }
+
+        public void LoadWorldSnapshot()
+        {
+            try
+            {
+                if (!File.Exists(worldArchivePath))
+                {
+                    historyStatus = "No live-world snapshot found yet.";
+                    return;
+                }
+
+                WorldSnapshotArchive archive = JsonUtility.FromJson<WorldSnapshotArchive>(File.ReadAllText(worldArchivePath));
+                if (archive == null || archive.population == null || archive.population.Count == 0)
+                {
+                    historyStatus = "Live-world snapshot is invalid.";
+                    return;
+                }
+
+                ClearSelectedCreature();
+                DestroyCreatures();
+                pendingGenerationSkips = 0;
+                skipMode = false;
+                birthsThisCycle = 0;
+                deathsThisCycle = 0;
+                interactionsThisCycle = 0;
+                predationsThisCycle = 0;
+                paused = false;
+                simulationSpeed = 1f;
+                Time.timeScale = 1f;
+                evaluationElapsed = Mathf.Clamp(archive.evaluationElapsed, 0f, generationDuration);
+
+                engine = new EvolutionEngine(populationSize, randomSeed);
+                engine.Initialize();
+                if (!string.IsNullOrEmpty(archive.historyJson))
+                {
+                    engine.History.TryLoadJson(archive.historyJson);
+                }
+
+                engine.RestorePopulation(archive.population, archive.generation);
+                SpawnPopulation(engine.CurrentPopulation, archive.creatures);
+                historyStatus = "Loaded live world at generation " + Generation + ".";
+            }
+            catch (System.Exception exception)
+            {
+                historyStatus = "World load failed: " + exception.Message;
+            }
+        }
+
         public void RequestGenerationSkip(int count)
         {
             if (count <= 0)
@@ -621,6 +881,8 @@ namespace EvolutionLab
             evaluationElapsed = 0f;
             birthsThisCycle = 0;
             deathsThisCycle = 0;
+            interactionsThisCycle = 0;
+            predationsThisCycle = 0;
             ecologyStatus = "Population is adapting to the environment.";
             ClearSelectedCreature();
             DestroyCreatures();
@@ -653,9 +915,16 @@ namespace EvolutionLab
                 results.Add(creatures[i].CaptureEvaluation());
             }
 
-            engine.RecordEcologyCycle(results, birthsThisCycle, deathsThisCycle);
+            engine.RecordEcologyCycle(
+                results,
+                birthsThisCycle,
+                deathsThisCycle,
+                predationsThisCycle,
+                interactionsThisCycle);
             birthsThisCycle = 0;
             deathsThisCycle = 0;
+            interactionsThisCycle = 0;
+            predationsThisCycle = 0;
             if (pendingGenerationSkips > 0)
             {
                 pendingGenerationSkips--;
@@ -676,6 +945,13 @@ namespace EvolutionLab
 
         private void SpawnPopulation(IReadOnlyList<CreatureGenome> genomes)
         {
+            SpawnPopulation(genomes, null);
+        }
+
+        private void SpawnPopulation(
+            IReadOnlyList<CreatureGenome> genomes,
+            IReadOnlyList<WorldCreatureSnapshot> snapshots)
+        {
             DestroyCreatures();
             ClearSelectedCreature();
             if (genomes == null || genomes.Count == 0)
@@ -687,16 +963,49 @@ namespace EvolutionLab
             float laneCenter = (genomes.Count - 1) * 0.5f;
             for (int i = 0; i < genomes.Count; i++)
             {
+                WorldCreatureSnapshot snapshot = FindSnapshot(genomes[i], snapshots);
                 float laneZ = (i - laneCenter) * laneSpacing;
-                Vector3 origin = new Vector3(0f, 3.2f, laneZ);
+                Vector3 origin = snapshot == null
+                    ? new Vector3(0f, 3.2f, laneZ)
+                    : snapshot.position;
                 Color color = Color.HSVToRGB(
                     Mathf.Repeat((i / (float)genomes.Count) * 0.78f + Generation * 0.013f, 1f),
                     0.56f,
                     0.94f);
-                SpawnCreature(genomes[i], origin, color, initialEnergy);
+                Creature creature = SpawnCreature(genomes[i], origin, color, initialEnergy);
+                if (snapshot != null)
+                {
+                    creature.RestorePose(snapshot.position, snapshot.rotation);
+                    creature.RestoreLifeState(
+                        snapshot.energy,
+                        snapshot.age,
+                        snapshot.offspringCount,
+                        snapshot.killCount,
+                        snapshot.damageTaken);
+                }
             }
 
             IgnoreCrossCreatureCollisions();
+        }
+
+        private static WorldCreatureSnapshot FindSnapshot(
+            CreatureGenome genome,
+            IReadOnlyList<WorldCreatureSnapshot> snapshots)
+        {
+            if (genome == null || snapshots == null)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < snapshots.Count; i++)
+            {
+                if (snapshots[i] != null && snapshots[i].genomeId == genome.genomeId)
+                {
+                    return snapshots[i];
+                }
+            }
+
+            return null;
         }
 
         private Creature SpawnCreature(
@@ -714,6 +1023,9 @@ namespace EvolutionLab
                 jointDamping,
                 settlingDuration);
             creature.SetResourceSensor(environment == null ? null : environment.GetNearestResourcePosition);
+            creature.SetInteractionSensor(position => interactionSystem == null
+                ? CreatureInteractionObservation.Empty
+                : interactionSystem.Observe(creature, creatures, environment));
             creature.ConfigureLife(
                 startingEnergy,
                 maxEnergy,
@@ -729,6 +1041,37 @@ namespace EvolutionLab
             return creature;
         }
 
+        private void RecordInteractionEvents(IReadOnlyList<EcologyInteractionEvent> interactionEvents)
+        {
+            if (engine == null || engine.History == null || interactionEvents == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < interactionEvents.Count; i++)
+            {
+                EcologyInteractionEvent interaction = interactionEvents[i];
+                if (interaction == null || interaction.actor == null || interaction.target == null)
+                {
+                    continue;
+                }
+
+                // The cycle report already counts every encounter. The archive
+                // is a natural-history log, so keep only consequential events
+                // instead of writing one social contact per physics step.
+                if (interaction.predation && interaction.successful && !interaction.target.IsAlive)
+                {
+                    engine.History.RecordEvent(
+                        EvolutionEventType.Predation,
+                        Generation,
+                        interaction.actor.Genome == null ? string.Empty : interaction.actor.Genome.genomeId,
+                        interaction.target.Genome == null ? string.Empty : interaction.target.Genome.genomeId,
+                        "A lineage ended in a predatory encounter.",
+                        interaction.value);
+                }
+            }
+        }
+
         private void ProcessDeaths()
         {
             for (int i = 0; i < pendingDeaths.Count; i++)
@@ -739,8 +1082,26 @@ namespace EvolutionLab
                     continue;
                 }
 
-                engine.History.RecordIndividual(creature.CaptureEvaluation());
+                CreatureEvaluationResult result = creature.CaptureEvaluation();
+                engine.History.RecordIndividual(result);
+                engine.History.RecordEvent(
+                    EvolutionEventType.Death,
+                    Generation,
+                    creature.Genome == null ? string.Empty : creature.Genome.genomeId,
+                    string.Empty,
+                    string.IsNullOrEmpty(creature.DeathReason) ? "Individual died." : creature.DeathReason,
+                    creature.AgeSeconds);
                 engine.RemovePopulationGenome(creature.Genome);
+                if (!HasLivingLineage(creature.Genome))
+                {
+                    engine.History.RecordEvent(
+                        EvolutionEventType.LineageExtinction,
+                        Generation,
+                        creature.Genome == null ? string.Empty : creature.Genome.genomeId,
+                        string.Empty,
+                        "No living individual remains in this ancestry branch.",
+                        creature.SurvivalFitness);
+                }
                 if (selectedCreature == creature)
                 {
                     ClearSelectedCreature();
@@ -800,6 +1161,13 @@ namespace EvolutionLab
                     0.62f,
                     0.95f);
                 SpawnCreature(childGenome, birthOrigin, childColor, offspringInitialEnergy);
+                engine.History.RecordEvent(
+                    EvolutionEventType.Birth,
+                    Generation,
+                    childGenome.genomeId,
+                    parent.Genome == null ? string.Empty : parent.Genome.genomeId,
+                    partner == null ? "Asexual birth." : "A crossed birth from two nearby individuals.",
+                    childGenome.bodyParts == null ? 0f : childGenome.bodyParts.Count);
                 birthsThisCycle++;
             }
 
@@ -839,8 +1207,53 @@ namespace EvolutionLab
             return nearest;
         }
 
+        private bool HasLivingLineage(CreatureGenome genome)
+        {
+            if (genome == null || engine == null)
+            {
+                return false;
+            }
+
+            string rootId = FindLineageRoot(genome.genomeId);
+            for (int i = 0; i < engine.CurrentPopulation.Count; i++)
+            {
+                CreatureGenome candidate = engine.CurrentPopulation[i];
+                if (candidate != null && FindLineageRoot(candidate.genomeId) == rootId)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private string FindLineageRoot(string genomeId)
+        {
+            string currentId = genomeId ?? string.Empty;
+            var visited = new HashSet<string>();
+            while (!string.IsNullOrEmpty(currentId) && visited.Add(currentId))
+            {
+                if (engine == null || engine.History == null
+                    || !engine.History.TryGetIndividual(currentId, out IndividualHistoryRecord record)
+                    || record == null
+                    || string.IsNullOrEmpty(record.parentId))
+                {
+                    break;
+                }
+
+                currentId = record.parentId;
+            }
+
+            return currentId;
+        }
+
         private void IgnoreCrossCreatureCollisions()
         {
+            // Final interactions are resolved through generic spatial sensing
+            // below. Keeping physical body collisions isolated by default
+            // prevents a random articulated topology from turning an entire
+            // population into one unstable pile; this switch remains available
+            // for experiments where contact itself is the selection pressure.
             for (int i = 0; i < creatures.Count; i++)
             {
                 for (int j = i + 1; j < creatures.Count; j++)
@@ -851,7 +1264,10 @@ namespace EvolutionLab
                     {
                         for (int b = 0; b < second.Count; b++)
                         {
-                            Physics.IgnoreCollision(first[a], second[b], true);
+                            Physics.IgnoreCollision(
+                                first[a],
+                                second[b],
+                                preserveInterCreaturePhysicsIsolation);
                         }
                     }
                 }

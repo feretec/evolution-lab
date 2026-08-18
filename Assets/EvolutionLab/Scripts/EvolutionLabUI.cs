@@ -55,10 +55,10 @@ namespace EvolutionLab
             EnsureStyles();
             float width = Mathf.Max(960f, Screen.width);
             float height = Mathf.Max(540f, Screen.height);
-            statsRect = new Rect(18f, 18f, 360f, 238f);
+            statsRect = new Rect(18f, 18f, 380f, 270f);
             controlsRect = new Rect(width - 368f, 18f, 350f, height - 36f);
-            float selectedHeight = Mathf.Clamp(height * 0.33f, 270f, 330f);
-            selectedRect = new Rect(18f, height - selectedHeight - 18f, 360f, selectedHeight);
+            float selectedHeight = Mathf.Clamp(height * 0.36f, 300f, 380f);
+            selectedRect = new Rect(18f, height - selectedHeight - 18f, 380f, selectedHeight);
             float historyWidth = Mathf.Max(220f, controlsRect.x - statsRect.xMax - 24f);
             historyRect = new Rect(statsRect.xMax + 12f, statsRect.y, historyWidth, statsRect.height);
 
@@ -94,7 +94,21 @@ namespace EvolutionLab
                 new Rect(content.x, content.y + 162f, content.width, 16f),
                 "Cycle time     " + simulation.EvaluationElapsed.ToString("0.0") + " / " + simulation.GenerationDuration.ToString("0.0") + " s",
                 smallStyle);
-            GUI.Label(new Rect(content.x, content.y + 180f, content.width, 30f), simulation.EcologyStatus, wrapStyle);
+            GUI.Label(
+                new Rect(content.x, content.y + 178f, content.width, 16f),
+                "Encounters     " + simulation.InteractionsThisCycle + " / kills " + simulation.PredationsThisCycle,
+                smallStyle);
+            GUI.Label(
+                new Rect(content.x, content.y + 194f, content.width, 16f),
+                "Lineages       " + (simulation.LineageSummaries == null ? 0 : simulation.LineageSummaries.Count)
+                + " / extinct " + simulation.ExtinctLineageCount
+                + " / species " + (simulation.SpeciesSummaries == null ? 0 : simulation.SpeciesSummaries.Count),
+                smallStyle);
+            GUI.Label(
+                new Rect(content.x, content.y + 210f, content.width, 16f),
+                "World features  " + simulation.EnvironmentFeatureCount,
+                smallStyle);
+            GUI.Label(new Rect(content.x, content.y + 226f, content.width, 30f), simulation.EcologyStatus, wrapStyle);
         }
 
         private void DrawHistory()
@@ -152,8 +166,20 @@ namespace EvolutionLab
             GUI.Label(
                 new Rect(historyRect.x + 16f, historyRect.yMax - 28f, historyRect.width - 32f, 18f),
                 "Best " + latestRecord.bestFitness.ToString("0.000")
-                + "   Average " + latestRecord.averageFitness.ToString("0.000"),
+                + "   Average " + latestRecord.averageFitness.ToString("0.000")
+                + "   Encounters " + latestRecord.interactions
+                + "   Kills " + latestRecord.predations,
                 smallStyle);
+
+            IReadOnlyList<EvolutionEventRecord> events = simulation.EvolutionEvents;
+            if (events != null && events.Count > 0)
+            {
+                EvolutionEventRecord latestEvent = events[events.Count - 1];
+                GUI.Label(
+                    new Rect(historyRect.x + 16f, historyRect.yMax - 46f, historyRect.width - 32f, 18f),
+                    "Latest event  " + latestEvent.type + " — " + latestEvent.message,
+                    smallStyle);
+            }
         }
 
         private void DrawFitnessGraph(Rect graphRect, IReadOnlyList<GenerationRecord> records)
@@ -349,6 +375,90 @@ namespace EvolutionLab
             GUILayout.EndHorizontal();
 
             GUILayout.Space(6f);
+            GUILayout.Label("EMERGENT INTERACTIONS", smallStyle);
+            if (GUILayout.Button(
+                    "Interactions: " + (simulation.EcologicalInteractionsEnabled ? "ON" : "OFF"),
+                    buttonStyle,
+                    GUILayout.Height(25f)))
+            {
+                simulation.ToggleEcologicalInteractions();
+            }
+
+            if (GUILayout.Button(
+                    "Body collision isolation: " + (simulation.InterCreaturePhysicsIsolationEnabled ? "ON" : "OFF"),
+                    buttonStyle,
+                    GUILayout.Height(25f)))
+            {
+                simulation.ToggleInterCreaturePhysicsIsolation();
+            }
+
+            GUILayout.Label(
+                "Encounter energy transfer " + simulation.InteractionDamageMultiplier.ToString("0.0") + "x",
+                labelStyle);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Damage -0.25", buttonStyle, GUILayout.Height(24f)))
+            {
+                simulation.AdjustInteractionDamageMultiplier(-0.25f);
+            }
+
+            if (GUILayout.Button("Damage +0.25", buttonStyle, GUILayout.Height(24f)))
+            {
+                simulation.AdjustInteractionDamageMultiplier(0.25f);
+            }
+
+            GUILayout.EndHorizontal();
+            IReadOnlyList<LineageSummary> lineages = simulation.LineageSummaries;
+            IReadOnlyList<SpeciesSummary> species = simulation.SpeciesSummaries;
+            GUILayout.Label(
+                "Lineages " + (lineages == null ? 0 : lineages.Count)
+                + " / extinct " + simulation.ExtinctLineageCount
+                + " / morphotypes " + (species == null ? 0 : species.Count),
+                smallStyle);
+
+            if (lineages != null)
+            {
+                int extinctShown = 0;
+                for (int i = 0; i < lineages.Count && extinctShown < 3; i++)
+                {
+                    LineageSummary lineage = lineages[i];
+                    if (lineage == null || !lineage.extinct)
+                    {
+                        continue;
+                    }
+
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label(
+                        "Extinct G" + lineage.earliestGeneration + "–G" + lineage.latestGeneration
+                        + " (" + lineage.memberCount + ")",
+                        smallStyle);
+                    if (GUILayout.Button("View", buttonStyle, GUILayout.Width(52f), GUILayout.Height(22f)))
+                    {
+                        simulation.PreviewHistoryGenome(lineage.representativeGenomeId);
+                    }
+
+                    GUILayout.EndHorizontal();
+                    extinctShown++;
+                }
+            }
+
+            IReadOnlyList<EvolutionEventRecord> events = simulation.EvolutionEvents;
+            if (events != null && events.Count > 0)
+            {
+                GUILayout.Label("RECENT NATURAL HISTORY", smallStyle);
+                int eventStart = Mathf.Max(0, events.Count - 3);
+                for (int i = eventStart; i < events.Count; i++)
+                {
+                    EvolutionEventRecord record = events[i];
+                    if (record != null)
+                    {
+                        GUILayout.Label(
+                            "G" + record.generation + " " + record.type + ": " + record.message,
+                            wrapStyle);
+                    }
+                }
+            }
+
+            GUILayout.Space(6f);
             GUILayout.Label("JOINT PHYSICS", smallStyle);
             GUILayout.Label("Drive force       " + simulation.JointDriveForce.ToString("0"), labelStyle);
             GUILayout.BeginHorizontal();
@@ -457,6 +567,18 @@ namespace EvolutionLab
             }
 
             GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Save world", buttonStyle, GUILayout.Height(24f)))
+            {
+                simulation.SaveWorldSnapshot();
+            }
+
+            if (GUILayout.Button("Load world", buttonStyle, GUILayout.Height(24f)))
+            {
+                simulation.LoadWorldSnapshot();
+            }
+
+            GUILayout.EndHorizontal();
             if (!string.IsNullOrEmpty(simulation.HistoryStatus))
             {
                 GUILayout.Label(simulation.HistoryStatus, wrapStyle);
@@ -518,6 +640,9 @@ namespace EvolutionLab
             GUILayout.Label("Generation " + genome.generation, labelStyle);
             GUILayout.EndHorizontal();
             GUILayout.Label("Parent ID  " + (string.IsNullOrEmpty(genome.parentId) ? "Founder" : genome.parentId), smallStyle);
+            GUILayout.Label(
+                "Second parent  " + (string.IsNullOrEmpty(genome.secondaryParentId) ? "Asexual / none" : genome.secondaryParentId),
+                smallStyle);
             GUILayout.BeginHorizontal();
             GUILayout.Label(
                 "Energy " + selectedCreature.Energy.ToString("0.0") + " / " + selectedCreature.MaxEnergy.ToString("0.0"),
@@ -532,6 +657,26 @@ namespace EvolutionLab
             GUILayout.Label(
                 "Status " + (selectedCreature.IsAlive ? "Alive" : selectedCreature.DeathReason),
                 smallStyle);
+            GUILayout.Label("Recorded descendants  " + simulation.SelectedDescendantCount, smallStyle);
+            EcologyGene ecology = genome.ecology;
+            if (ecology != null)
+            {
+                GUILayout.Label("Tendency  " + selectedCreature.EcologicalTendency, smallStyle);
+                GUILayout.Label(
+                    "Traits    forage " + ecology.foragingDrive.ToString("0.00")
+                    + "  interact " + ecology.predationDrive.ToString("0.00")
+                    + "  defend " + ecology.defenseDrive.ToString("0.00"),
+                    smallStyle);
+                GUILayout.Label(
+                    "Sensor    " + ecology.sensorRange.ToString("0.0")
+                    + "  efficiency " + ecology.energyEfficiency.ToString("0.00"),
+                    smallStyle);
+                GUILayout.Label(
+                    "Brain     intent " + selectedCreature.InteractionIntent.ToString("0.00")
+                    + "  social " + selectedCreature.SocialIntent.ToString("0.00")
+                    + "  kills " + selectedCreature.KillCount,
+                    smallStyle);
+            }
             GUILayout.Space(4f);
             GUILayout.Label("ANCESTRY (newest to oldest)", smallStyle);
             GUILayout.Label(BuildAncestryLabel(), wrapStyle);

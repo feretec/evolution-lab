@@ -130,3 +130,35 @@ The UI uses Unity IMGUI so the prototype does not need a second input-action ass
 | Simplified resource and reproduction rules | Makes natural population change observable before predation | General effects, mating, predation, and species/lineage analysis |
 
 Any code using one of these constraints should include a nearby TODO or comment when the assumption is not obvious.
+
+## 8. Final runtime integration
+
+The current scene still uses the small GameObject bootstrap, but the simulation boundary now contains the major Final observation loop:
+
+```text
+CreatureGenome (body + brain weights + continuous ecology traits)
+        │
+        ├── Brain ───────────────> motor / interaction intent
+        ├── CreatureBuilder ─────> Rigidbody + ConfigurableJoint embodiment
+        └── SimulationHistory ───> events / ancestry / extinct branches
+
+EnvironmentController ──> EnergyResource + neutral EnvironmentFeature colliders
+EcologyInteractionSystem ──> generic proximity / avoidance / energy transfer
+NaturalHistoryCatalog ─────> post-hoc lineages and morphotype summaries
+EvolutionLabUI ────────────> observation, time, camera, archive and world controls
+```
+
+`EcologyGene` is deliberately continuous. `predationDrive` is not a predator type; it participates with body mass, defense, sensor range, brain output, distance, and energy state in the interaction calculation. The same code path can therefore produce pursuing, evasive, resource-oriented, or clustering phenotypes without introducing a role class.
+
+`EcologyInteractionSystem.Observe` supplies only generic directions, distances, obstacle proximity, and nearby-body information. `Tick` records outcomes separately from the controller, which keeps the genome/body/brain boundary reusable for a later data-oriented simulation. The current collision-isolation switch is a physics stability control; it does not disable spatial encounters.
+
+`SimulationHistory` now serializes `EvolutionEventRecord` values alongside generation and individual records. `NaturalHistoryCatalog` derives lineage groups by walking parent IDs with cycle protection, and derives morphotype keys from morphology, brain magnitude, and ecology traits after the simulation has produced records. This is classification as an observation layer rather than a fixed inheritance hierarchy.
+
+`WorldSnapshotArchive` is the current persistence seam for live observation. It stores cloned genomes, live runtime state, poses, and the history JSON. Loading rebuilds GameObjects through `CreatureBuilder` and restores runtime state; resource timers and the random stream are regenerated rather than silently pretending to be deterministic. A future complete save system can add those environment/random-state fields without changing the genome schema.
+
+## 9. Verification notes
+
+- Unity MCP recompile completed with no C# errors after the Final integration.
+- Play Mode was exercised with visible articulated creatures, resources, neutral physical features, UI statistics, births, spatial encounter counts, and history events.
+- The live-world save path successfully wrote a snapshot from Play Mode.
+- Console review found no new errors. The remaining warning is the existing Visual Studio integration UDP-port warning (`Unable to use UDP port 56382`), unrelated to the simulation scripts.

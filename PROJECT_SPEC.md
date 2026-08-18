@@ -208,3 +208,17 @@ Prototype 1 is implemented under `Assets/EvolutionLab/Scripts` with runtime boot
 - Default evaluation duration is 20 seconds. Joint drive force, target angular speed, damping, and settling duration are serialized simulation parameters and the main values can also be adjusted while running.
 - Unity `6000.5.8f1` Play Mode was exercised through multiple ecology cycles, x10 fast-forward, pause/resume, live individual selection, and lifecycle observation; the Unity Console showed no errors caused by the prototype.
 - Flat ground, lane isolation, fixed brain output ceiling, and simplified resource/reproduction rules are still explicit prototype constraints; they are not the final ecology design.
+
+## 11. Final runtime implementation status
+
+The runtime now crosses the Prototype 2 boundary into an integrated artificial-life observation world while preserving the genome/body/brain/history seams.
+
+- `CreatureGenome` schema 3 adds mutable continuous ecological genes: foraging drive, interaction drive, defense, sociality, sensor range, body protection, energy efficiency, and reproduction drive. They are traits, not fixed predator/prey or species classes.
+- `BrainGene` now receives twenty-two observations and exposes twelve inherited controller outputs. The original locomotion inputs remain stable at the front of the vector; generic nearby-body, threat, obstacle, and ecological observations are appended for forward-compatible archive repair.
+- `EcologyInteractionSystem` resolves spatial encounters from inherited traits and neural outputs. Energy transfer, pursuit, avoidance, social proximity, damage, kills, and predation are emergent outcomes of continuous values. No organism is assigned a carnivore/herbivore class.
+- `EnvironmentFeature` adds deterministic neutral physical geometry to the world. Features expose colliders and shape only; no hiding, defense, or food semantics are sent to controllers.
+- `SimulationHistory` stores consequential natural-history events, combat statistics, descendant queries, and a `NaturalHistoryCatalog` that derives lineage summaries, extinct branches, and post-hoc morphology/brain/ecology morphotypes.
+- The observation UI now includes encounters, kills, physical features, lineages, extinct branches, morphotypes, recent natural-history events, continuous ecological traits, neural interaction intent, descendants, and save/load controls for both history archives and live-world snapshots.
+- Live-world snapshots restore current genomes, generation, camera-observable poses, energy, age, offspring, combat counters, and the observation archive. Environment timers and the random stream are intentionally regenerated from the configured seed; this is documented as a replacement seam for deterministic full-world persistence.
+
+The remaining explicitly bounded seams are a flat ground plane, a fixed feed-forward brain topology, a maximum body-part/actuator budget, and collision isolation between articulated individuals by default. The last setting can be toggled in the UI; generic spatial encounters already operate independently of that physics-stability guard. These are implementation boundaries, not ecological role definitions, and can be replaced by a Jobs/Burst/ECS simulation backend without changing the genome or history contract.

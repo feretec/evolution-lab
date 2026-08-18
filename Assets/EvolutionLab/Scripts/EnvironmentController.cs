@@ -10,7 +10,9 @@ namespace EvolutionLab
     {
         private GameObject ground;
         private Material groundMaterial;
+        private Material featureMaterial;
         private readonly List<EnergyResource> resources = new List<EnergyResource>();
+        private readonly List<EnvironmentFeature> features = new List<EnvironmentFeature>();
         private System.Random random;
         private int resourceCount;
         private float resourceEnergy;
@@ -38,6 +40,11 @@ namespace EvolutionLab
 
                 return count;
             }
+        }
+
+        public int FeatureCount
+        {
+            get { return features.Count; }
         }
 
         public void Initialize()
@@ -74,19 +81,26 @@ namespace EvolutionLab
                 shader = Shader.Find("Standard");
             }
 
-            groundMaterial = new Material(shader)
+            if (shader != null)
             {
-                color = new Color(0.12f, 0.16f, 0.2f, 1f),
-                enableInstancing = true
-            };
+                groundMaterial = new Material(shader)
+                {
+                    color = new Color(0.12f, 0.16f, 0.2f, 1f),
+                    enableInstancing = true
+                };
+            }
             Renderer renderer = ground.GetComponent<Renderer>();
             if (renderer != null)
             {
-                renderer.sharedMaterial = groundMaterial;
+                if (groundMaterial != null)
+                {
+                    renderer.sharedMaterial = groundMaterial;
+                }
             }
 
             GroundCollider = ground.GetComponent<Collider>();
             ResetResources(seed, initialPopulation, laneSpacing);
+            SpawnPhysicalFeatures(seed);
         }
 
         public void ResetResources(int seed, int initialPopulation, float laneSpacing)
@@ -115,6 +129,52 @@ namespace EvolutionLab
                     : -19f + (float)random.NextDouble() * 38f;
                 SpawnResource(new Vector3(x, 0.2f, z), i);
             }
+        }
+
+        public float GetObstacleProximity(Vector3 origin, float radius)
+        {
+            float searchRadius = Mathf.Max(0.1f, radius);
+            float nearest = searchRadius;
+            for (int i = 0; i < features.Count; i++)
+            {
+                EnvironmentFeature feature = features[i];
+                if (feature == null)
+                {
+                    continue;
+                }
+
+                Vector3 delta = feature.transform.position - origin;
+                delta.y = 0f;
+                float distance = Mathf.Max(0f, delta.magnitude - feature.PhysicalRadius);
+                nearest = Mathf.Min(nearest, distance);
+            }
+
+            return Mathf.Clamp01(1f - nearest / searchRadius);
+        }
+
+        public Vector3 GetNearestFeatureDirection(Vector3 origin, float radius)
+        {
+            float searchRadius = Mathf.Max(0.1f, radius);
+            float nearest = searchRadius * searchRadius;
+            Vector3 direction = Vector3.zero;
+            for (int i = 0; i < features.Count; i++)
+            {
+                EnvironmentFeature feature = features[i];
+                if (feature == null)
+                {
+                    continue;
+                }
+
+                Vector3 delta = feature.transform.position - origin;
+                delta.y = 0f;
+                if (delta.sqrMagnitude <= nearest)
+                {
+                    nearest = delta.sqrMagnitude;
+                    direction = delta;
+                }
+            }
+
+            return direction.sqrMagnitude < 0.0001f ? Vector3.zero : direction.normalized;
         }
 
         public void Tick(float deltaTime)
@@ -188,6 +248,66 @@ namespace EvolutionLab
             resources.Add(resource);
         }
 
+        private void SpawnPhysicalFeatures(int seed)
+        {
+            for (int i = features.Count - 1; i >= 0; i--)
+            {
+                if (features[i] != null)
+                {
+                    features[i].gameObject.SetActive(false);
+                    Destroy(features[i].gameObject);
+                }
+            }
+
+            features.Clear();
+            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+            if (shader == null)
+            {
+                shader = Shader.Find("Standard");
+            }
+
+            if (shader != null)
+            {
+                featureMaterial = new Material(shader)
+                {
+                    color = new Color(0.22f, 0.24f, 0.27f, 1f),
+                    enableInstancing = true
+                };
+            }
+
+            var featureRandom = new System.Random(seed ^ 0x4A17C39);
+            const int featureCount = 18;
+            for (int i = 0; i < featureCount; i++)
+            {
+                PrimitiveType type = i % 3 == 0
+                    ? PrimitiveType.Cylinder
+                    : (i % 3 == 1 ? PrimitiveType.Cube : PrimitiveType.Sphere);
+                GameObject featureObject = GameObject.CreatePrimitive(type);
+                featureObject.name = "Physical Feature " + i.ToString("00");
+                featureObject.transform.SetParent(transform, true);
+                float radius = 0.55f + (float)featureRandom.NextDouble() * 1.15f;
+                float x = 4f + (float)featureRandom.NextDouble() * 29f;
+                float z = -25f + (float)featureRandom.NextDouble() * 50f;
+                featureObject.transform.position = new Vector3(x, radius * 0.55f, z);
+                featureObject.transform.localScale = type == PrimitiveType.Cylinder
+                    ? new Vector3(radius, radius * 0.85f, radius)
+                    : new Vector3(radius * 1.4f, radius, radius * 1.15f);
+                featureObject.transform.rotation = Quaternion.Euler(
+                    0f,
+                    (float)featureRandom.NextDouble() * 360f,
+                    type == PrimitiveType.Cube ? (float)featureRandom.NextDouble() * 18f : 0f);
+                Renderer renderer = featureObject.GetComponent<Renderer>();
+                if (renderer != null && featureMaterial != null)
+                {
+                    renderer.sharedMaterial = featureMaterial;
+                }
+
+                EnvironmentFeature feature = featureObject.AddComponent<EnvironmentFeature>();
+                feature.Initialize(radius);
+                features.Add(feature);
+            }
+        }
+
         private void OnDestroy()
         {
             for (int i = 0; i < resources.Count; i++)
@@ -202,6 +322,12 @@ namespace EvolutionLab
             {
                 Destroy(groundMaterial);
                 groundMaterial = null;
+            }
+
+            if (featureMaterial != null)
+            {
+                Destroy(featureMaterial);
+                featureMaterial = null;
             }
         }
     }

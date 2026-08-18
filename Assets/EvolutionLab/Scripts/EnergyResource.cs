@@ -38,14 +38,20 @@ namespace EvolutionLab
                 shader = Shader.Find("Standard");
             }
 
-            resourceMaterial = new Material(shader)
+            if (shader != null)
             {
-                color = color,
-                enableInstancing = true
-            };
+                resourceMaterial = new Material(shader)
+                {
+                    color = color,
+                    enableInstancing = true
+                };
+            }
             if (resourceRenderer != null)
             {
-                resourceRenderer.sharedMaterial = resourceMaterial;
+                if (resourceMaterial != null)
+                {
+                    resourceRenderer.sharedMaterial = resourceMaterial;
+                }
             }
 
             if (resourceCollider != null)

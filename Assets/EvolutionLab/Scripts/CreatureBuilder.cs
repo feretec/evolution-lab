@@ -17,7 +17,12 @@ namespace EvolutionLab
             float jointDamping,
             float settlingDuration)
         {
-            CreatureGenome genome = sourceGenome == null ? new CreatureGenome() : sourceGenome;
+            // A runtime embodiment owns a repaired snapshot. This prevents
+            // physics/display code from mutating the genome held by the
+            // population engine or a history archive.
+            CreatureGenome genome = sourceGenome == null
+                ? new CreatureGenome()
+                : sourceGenome.Clone();
             genome.Repair();
 
             GameObject container = new GameObject("Creature_" + genome.genomeId);
@@ -30,11 +35,15 @@ namespace EvolutionLab
                 shader = Shader.Find("Standard");
             }
 
-            Material material = new Material(shader)
+            Material material = null;
+            if (shader != null)
             {
-                color = color,
-                enableInstancing = true
-            };
+                material = new Material(shader)
+                {
+                    color = color,
+                    enableInstancing = true
+                };
+            }
 
             int partCount = genome.bodyParts.Count;
             var positions = new Vector3[partCount];
@@ -91,7 +100,10 @@ namespace EvolutionLab
                 Renderer renderer = partObject.GetComponent<Renderer>();
                 if (renderer != null)
                 {
-                    renderer.sharedMaterial = material;
+                    if (material != null)
+                    {
+                        renderer.sharedMaterial = material;
+                    }
                     renderers.Add(renderer);
                 }
 
