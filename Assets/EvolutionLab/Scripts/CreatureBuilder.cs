@@ -39,6 +39,7 @@ namespace EvolutionLab
             int partCount = genome.bodyParts.Count;
             var positions = new Vector3[partCount];
             var rotations = new Quaternion[partCount];
+            var connectionPoints = new Vector3[partCount];
             var partObjects = new GameObject[partCount];
             var rigidbodies = new List<Rigidbody>(partCount);
             var joints = new List<ConfigurableJoint>(Mathf.Max(0, partCount - 1));
@@ -59,13 +60,22 @@ namespace EvolutionLab
                     gene.localOffset.magnitude,
                     parentGene.length * 0.18f,
                     parentGene.length * 0.47f);
-                Vector3 parentAnchorLocal = direction * parentAnchorDistance;
+                Vector3 parentHalfExtents = new Vector3(
+                    parentGene.length * 0.5f,
+                    parentGene.thickness * 0.5f,
+                    parentGene.thickness * 0.5f);
+                float maxVisibleAttachmentDistance = DistanceToBoxBoundary(direction, parentHalfExtents);
+                float attachmentDistance = Mathf.Min(
+                    parentAnchorDistance,
+                    maxVisibleAttachmentDistance * 0.92f);
+                Vector3 parentAnchorLocal = direction * Mathf.Max(0f, attachmentDistance);
                 Quaternion childRotation = rotations[parentIndex] * Quaternion.Euler(gene.localEulerAngles);
                 Vector3 parentAnchorWorld = positions[parentIndex] + rotations[parentIndex] * parentAnchorLocal;
-                Vector3 childAnchorLocal = Vector3.left * (gene.length * 0.45f);
+                Vector3 childAnchorWorldOffset = childRotation * (Vector3.left * (gene.length * 0.45f));
 
-                positions[i] = parentAnchorWorld - childRotation * childAnchorLocal;
+                positions[i] = parentAnchorWorld - childAnchorWorldOffset;
                 rotations[i] = childRotation;
+                connectionPoints[i] = parentAnchorWorld;
             }
 
             for (int i = 0; i < partCount; i++)
@@ -105,6 +115,10 @@ namespace EvolutionLab
                 rigidbodies.Add(rigidbody);
             }
 
+            // Ensure all scaled transforms are reflected in the physics scene
+            // before ConfigurableJoints cache their initial anchor state.
+            Physics.SyncTransforms();
+
             for (int i = 1; i < partCount; i++)
             {
                 BodyPartGene gene = genome.bodyParts[i];
@@ -112,9 +126,12 @@ namespace EvolutionLab
                 ConfigurableJoint joint = partObjects[i].AddComponent<ConfigurableJoint>();
                 joint.connectedBody = rigidbodies[parentIndex];
                 joint.autoConfigureConnectedAnchor = false;
-                joint.anchor = Vector3.left * (gene.length * 0.45f);
-                Vector3 parentAnchorWorld = positions[i] + rotations[i] * joint.anchor;
-                joint.connectedAnchor = partObjects[parentIndex].transform.InverseTransformPoint(parentAnchorWorld);
+                Vector3 connectionPoint = connectionPoints[i];
+                // Anchor values are local to scaled body transforms. Resolve both
+                // sides from one world-space point so the physics seam and the
+                // visible seam stay identical even when length/thickness mutate.
+                joint.anchor = partObjects[i].transform.InverseTransformPoint(connectionPoint);
+                joint.connectedAnchor = partObjects[parentIndex].transform.InverseTransformPoint(connectionPoint);
                 joint.axis = Vector3.forward;
                 joint.secondaryAxis = Vector3.up;
                 joint.configuredInWorldSpace = false;
@@ -162,8 +179,8 @@ namespace EvolutionLab
                 };
                 joint.targetAngularVelocity = Vector3.zero;
                 joint.projectionMode = JointProjectionMode.PositionAndRotation;
-                joint.projectionDistance = 0.08f;
-                joint.projectionAngle = 8f;
+                joint.projectionDistance = 0.02f;
+                joint.projectionAngle = 4f;
                 joints.Add(joint);
             }
 
@@ -194,6 +211,27 @@ namespace EvolutionLab
                 settlingDuration);
             creature.BeginEvaluation();
             return creature;
+        }
+
+        private static float DistanceToBoxBoundary(Vector3 direction, Vector3 halfExtents)
+        {
+            float distance = float.PositiveInfinity;
+            if (Mathf.Abs(direction.x) > 0.0001f)
+            {
+                distance = Mathf.Min(distance, halfExtents.x / Mathf.Abs(direction.x));
+            }
+
+            if (Mathf.Abs(direction.y) > 0.0001f)
+            {
+                distance = Mathf.Min(distance, halfExtents.y / Mathf.Abs(direction.y));
+            }
+
+            if (Mathf.Abs(direction.z) > 0.0001f)
+            {
+                distance = Mathf.Min(distance, halfExtents.z / Mathf.Abs(direction.z));
+            }
+
+            return float.IsInfinity(distance) ? 0f : distance;
         }
     }
 }
