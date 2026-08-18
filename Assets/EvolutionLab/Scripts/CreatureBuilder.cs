@@ -67,7 +67,7 @@ namespace EvolutionLab
                 float maxVisibleAttachmentDistance = DistanceToBoxBoundary(direction, parentHalfExtents);
                 float attachmentDistance = Mathf.Min(
                     parentAnchorDistance,
-                    maxVisibleAttachmentDistance * 0.92f);
+                    maxVisibleAttachmentDistance * 0.98f);
                 Vector3 parentAnchorLocal = direction * Mathf.Max(0f, attachmentDistance);
                 Quaternion childRotation = rotations[parentIndex] * Quaternion.Euler(gene.localEulerAngles);
                 Vector3 parentAnchorWorld = positions[parentIndex] + rotations[parentIndex] * parentAnchorLocal;
@@ -109,6 +109,12 @@ namespace EvolutionLab
                 rigidbody.interpolation = RigidbodyInterpolation.Interpolate;
                 rigidbody.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
                 rigidbody.maxAngularVelocity = 30f;
+                // Long articulated chains need a little more solver budget, while
+                // limiting depenetration prevents a bad spawn from exploding the
+                // whole individual before its brain can be evaluated.
+                rigidbody.solverIterations = 12;
+                rigidbody.solverVelocityIterations = 8;
+                rigidbody.maxDepenetrationVelocity = 5f;
                 bodyPart.Configure(creature, i);
 
                 partObjects[i] = partObject;
@@ -179,8 +185,10 @@ namespace EvolutionLab
                 };
                 joint.targetAngularVelocity = Vector3.zero;
                 joint.projectionMode = JointProjectionMode.PositionAndRotation;
-                joint.projectionDistance = 0.02f;
-                joint.projectionAngle = 4f;
+                // Keep a small correction envelope. A near-zero projection
+                // distance can inject large impulses into a mutated chain.
+                joint.projectionDistance = 0.05f;
+                joint.projectionAngle = 6f;
                 joints.Add(joint);
             }
 

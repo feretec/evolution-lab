@@ -84,7 +84,7 @@ The brain uses ten observations in this phase: root velocity, angular state, til
 
 - Each body gene becomes a scaled cube with a `Rigidbody` and `BoxCollider`.
 - Each non-root part receives a `ConfigurableJoint` connected to its gene parent.
-- Prototype 1 locks all three linear axes, limits the primary angular axis, and locks the other angular axes for stability. The builder clamps each attachment point inside the parent box and derives both joint anchors from the same world-space point, so mutated length/thickness and angled branches cannot create a visible gap. The joint type leaves a seam for future multi-axis joint genes.
+- Prototype 1 locks all three linear axes, limits the primary angular axis, and locks the other angular axes for stability. The builder clamps each attachment point inside the parent box and derives both joint anchors from the same world-space point, so mutated length/thickness and angled branches cannot create a visible gap. Self-collision is explicitly disabled within each creature; solver iterations and a bounded projection envelope are tuned to absorb mutated spawn poses without large corrective impulses. The joint type leaves a seam for future multi-axis joint genes.
 - Joint limits, drive strength, target angular speed, damping, and the initial settling window are tunable from `EvolutionSimulation`.
 - A neural output controls target angular velocity; no hand-authored walking gait is supplied.
 - Bodies are spawned in independent lanes and cross-creature collisions are ignored. This is a temporary experimental control that makes displacement attributable to the individual. It can be removed when ecology is introduced.
