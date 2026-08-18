@@ -35,6 +35,7 @@ namespace EvolutionLab
         private float speedBeforeSkip = 1f;
         private float initialTimeScale = 1f;
         private bool initialized;
+        private readonly List<IndividualHistoryRecord> selectedAncestry = new List<IndividualHistoryRecord>();
 
         public int Generation
         {
@@ -54,6 +55,16 @@ namespace EvolutionLab
         public float AverageFitness
         {
             get { return engine == null || engine.LastReport == null ? 0f : engine.LastReport.averageFitness; }
+        }
+
+        public IReadOnlyList<GenerationRecord> GenerationHistory
+        {
+            get { return engine == null || engine.History == null ? null : engine.History.Generations; }
+        }
+
+        public IReadOnlyList<IndividualHistoryRecord> SelectedAncestry
+        {
+            get { return selectedAncestry; }
         }
 
         public float EvaluationElapsed
@@ -122,6 +133,11 @@ namespace EvolutionLab
         public int PendingGenerationSkips
         {
             get { return pendingGenerationSkips; }
+        }
+
+        public bool IsFollowingSelected
+        {
+            get { return freeCamera != null && freeCamera.IsFollowing; }
         }
 
         private void Start()
@@ -251,6 +267,23 @@ namespace EvolutionLab
             if (freeCamera != null)
             {
                 freeCamera.ResetView();
+            }
+        }
+
+        public void ToggleFollowSelected()
+        {
+            if (freeCamera == null || selectedCreature == null || selectedCreature.RootBody == null)
+            {
+                return;
+            }
+
+            if (freeCamera.IsFollowing)
+            {
+                freeCamera.StopFollowing();
+            }
+            else
+            {
+                freeCamera.Follow(selectedCreature.RootBody.transform);
             }
         }
 
@@ -392,6 +425,8 @@ namespace EvolutionLab
                 return;
             }
 
+            bool wasFollowing = freeCamera != null && freeCamera.IsFollowing;
+
             if (selectedCreature != null && selectedCreature != creature)
             {
                 selectedCreature.SetSelected(false);
@@ -399,6 +434,12 @@ namespace EvolutionLab
 
             selectedCreature = creature;
             selectedCreature.SetSelected(true);
+            RefreshSelectedAncestry();
+            if (wasFollowing && freeCamera != null && selectedCreature.RootBody != null)
+            {
+                freeCamera.Follow(selectedCreature.RootBody.transform);
+            }
+
             if (ui != null)
             {
                 ui.SetSelectedCreature(selectedCreature);
@@ -430,10 +471,28 @@ namespace EvolutionLab
             }
 
             selectedCreature = null;
+            selectedAncestry.Clear();
+            if (freeCamera != null)
+            {
+                freeCamera.StopFollowing();
+            }
+
             if (ui != null)
             {
                 ui.SetSelectedCreature(null);
             }
+        }
+
+        private void RefreshSelectedAncestry()
+        {
+            selectedAncestry.Clear();
+            if (engine == null || engine.History == null || selectedCreature == null || selectedCreature.Genome == null)
+            {
+                return;
+            }
+
+            List<IndividualHistoryRecord> ancestry = engine.History.GetAncestry(selectedCreature.Genome, 8);
+            selectedAncestry.AddRange(ancestry);
         }
 
         private void HandleWorldSelection()

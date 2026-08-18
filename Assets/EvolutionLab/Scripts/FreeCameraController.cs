@@ -23,6 +23,13 @@ namespace EvolutionLab
         private float yaw;
         private float pitch;
         private EvolutionLabUI ui;
+        private Transform followTarget;
+        private Vector3 followOffset;
+
+        public bool IsFollowing
+        {
+            get { return followTarget != null; }
+        }
 
         public void Configure(Vector3 position, Vector3 lookAt)
         {
@@ -33,12 +40,29 @@ namespace EvolutionLab
 
         public void ResetView()
         {
+            StopFollowing();
             SetView(defaultPosition, defaultLookAt);
         }
 
         public void BindUI(EvolutionLabUI owner)
         {
             ui = owner;
+        }
+
+        public void Follow(Transform target)
+        {
+            if (target == null)
+            {
+                return;
+            }
+
+            followTarget = target;
+            followOffset = transform.position - target.position;
+        }
+
+        public void StopFollowing()
+        {
+            followTarget = null;
         }
 
         private void Awake()
@@ -48,6 +72,15 @@ namespace EvolutionLab
 
         private void Update()
         {
+            if (followTarget == null)
+            {
+                followTarget = null;
+            }
+            else
+            {
+                transform.position = followTarget.position + followOffset;
+            }
+
             Keyboard keyboard = Keyboard.current;
             Mouse mouse = Mouse.current;
             if (keyboard == null && mouse == null)
@@ -105,6 +138,10 @@ namespace EvolutionLab
                 + transform.forward * input.z
                 + Vector3.up * input.y;
             transform.position += movement * speed * deltaTime;
+            if (followTarget != null && movement.sqrMagnitude > 0.0001f)
+            {
+                followOffset = transform.position - followTarget.position;
+            }
 
             if (mouse != null)
             {

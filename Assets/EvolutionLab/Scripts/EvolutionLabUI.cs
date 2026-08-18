@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace EvolutionLab
@@ -16,9 +17,13 @@ namespace EvolutionLab
         private GUIStyle smallStyle;
         private GUIStyle buttonStyle;
         private GUIStyle selectedButtonStyle;
+        private GUIStyle graphStyle;
+        private GUIStyle wrapStyle;
+        private Material graphLineMaterial;
         private Vector2 controlsScrollPosition;
         private Rect statsRect;
         private Rect controlsRect;
+        private Rect historyRect;
         private Rect selectedRect;
 
         public void Bind(EvolutionSimulation owner)
@@ -36,6 +41,7 @@ namespace EvolutionLab
             Vector2 guiPosition = new Vector2(screenPosition.x, Screen.height - screenPosition.y);
             return statsRect.Contains(guiPosition)
                 || controlsRect.Contains(guiPosition)
+                || historyRect.Contains(guiPosition)
                 || selectedRect.Contains(guiPosition);
         }
 
@@ -49,11 +55,15 @@ namespace EvolutionLab
             EnsureStyles();
             float width = Mathf.Max(960f, Screen.width);
             float height = Mathf.Max(540f, Screen.height);
-            statsRect = new Rect(18f, 18f, 350f, 210f);
+            statsRect = new Rect(18f, 18f, 350f, 190f);
             controlsRect = new Rect(width - 368f, 18f, 350f, height - 36f);
-            selectedRect = new Rect(18f, height - 230f, 350f, 212f);
+            float selectedHeight = Mathf.Clamp(height * 0.27f, 230f, 285f);
+            selectedRect = new Rect(18f, height - selectedHeight - 18f, 350f, selectedHeight);
+            float historyWidth = Mathf.Max(220f, controlsRect.x - statsRect.xMax - 24f);
+            historyRect = new Rect(statsRect.xMax + 12f, statsRect.y, historyWidth, statsRect.height);
 
             DrawStatistics();
+            DrawHistory();
             DrawControls();
             DrawSelectedCreature();
         }
@@ -74,6 +84,140 @@ namespace EvolutionLab
                 "Evaluation     " + simulation.EvaluationElapsed.ToString("0.0") + " / " + simulation.GenerationDuration.ToString("0.0") + " s",
                 smallStyle);
             GUILayout.EndArea();
+        }
+
+        private void DrawHistory()
+        {
+            if (historyRect.height < 42f)
+            {
+                return;
+            }
+
+            GUI.Box(historyRect, GUIContent.none, panelStyle);
+            GUI.Label(
+                new Rect(historyRect.x + 16f, historyRect.y + 10f, historyRect.width - 32f, 24f),
+                "EVOLUTION HISTORY",
+                headerStyle);
+
+            IReadOnlyList<GenerationRecord> records = simulation.GenerationHistory;
+            int recordCount = records == null ? 0 : records.Count;
+            GUI.Label(
+                new Rect(historyRect.x + 16f, historyRect.y + 31f, historyRect.width - 32f, 18f),
+                "Completed generations  " + recordCount,
+                smallStyle);
+
+            if (recordCount == 0)
+            {
+                GUI.Label(
+                    new Rect(historyRect.x + 16f, historyRect.y + 58f, historyRect.width - 32f, 40f),
+                    "The first generation is still being evaluated.",
+                    smallStyle);
+                return;
+            }
+
+            if (historyRect.height < 150f)
+            {
+                GenerationRecord latest = records[recordCount - 1];
+                GUI.Label(
+                    new Rect(historyRect.x + 16f, historyRect.y + 58f, historyRect.width - 32f, 40f),
+                    "Latest  G" + latest.generation + "   Best " + latest.bestFitness.ToString("0.000")
+                    + "   Avg " + latest.averageFitness.ToString("0.000"),
+                    wrapStyle);
+                return;
+            }
+
+            Rect graphRect = new Rect(
+                historyRect.x + 16f,
+                historyRect.y + 54f,
+                historyRect.width - 32f,
+                historyRect.height - 86f);
+            GUI.Box(graphRect, GUIContent.none, graphStyle);
+            if (Event.current.type == EventType.Repaint)
+            {
+                DrawFitnessGraph(graphRect, records);
+            }
+
+            GenerationRecord latestRecord = records[recordCount - 1];
+            GUI.Label(
+                new Rect(historyRect.x + 16f, historyRect.yMax - 28f, historyRect.width - 32f, 18f),
+                "Best " + latestRecord.bestFitness.ToString("0.000")
+                + "   Average " + latestRecord.averageFitness.ToString("0.000"),
+                smallStyle);
+        }
+
+        private void DrawFitnessGraph(Rect graphRect, IReadOnlyList<GenerationRecord> records)
+        {
+            int count = records.Count;
+            int start = Mathf.Max(0, count - 160);
+            int last = count - 1;
+            float maximum = 0.001f;
+            for (int i = start; i < count; i++)
+            {
+                maximum = Mathf.Max(maximum, records[i].bestFitness, records[i].averageFitness);
+            }
+
+            DrawGraphLine(
+                new Vector2(graphRect.x, graphRect.y + graphRect.height * 0.5f),
+                new Vector2(graphRect.xMax, graphRect.y + graphRect.height * 0.5f),
+                new Color(0.28f, 0.45f, 0.52f, 0.35f));
+            DrawGraphLine(
+                new Vector2(graphRect.x, graphRect.yMax - 1f),
+                new Vector2(graphRect.xMax, graphRect.yMax - 1f),
+                new Color(0.28f, 0.45f, 0.52f, 0.5f));
+
+            for (int i = start + 1; i < count; i++)
+            {
+                Vector2 previousBest = GraphPoint(graphRect, i - 1, start, last, records[i - 1].bestFitness, maximum);
+                Vector2 currentBest = GraphPoint(graphRect, i, start, last, records[i].bestFitness, maximum);
+                Vector2 previousAverage = GraphPoint(graphRect, i - 1, start, last, records[i - 1].averageFitness, maximum);
+                Vector2 currentAverage = GraphPoint(graphRect, i, start, last, records[i].averageFitness, maximum);
+                DrawGraphLine(previousBest, currentBest, new Color(0.35f, 0.9f, 1f, 1f));
+                DrawGraphLine(previousAverage, currentAverage, new Color(0.55f, 0.68f, 0.76f, 0.9f));
+            }
+        }
+
+        private static Vector2 GraphPoint(
+            Rect graphRect,
+            int index,
+            int firstIndex,
+            int lastIndex,
+            float value,
+            float maximum)
+        {
+            float x = graphRect.x + Mathf.InverseLerp(firstIndex, Mathf.Max(firstIndex + 1, lastIndex), index) * graphRect.width;
+            float y = graphRect.yMax - Mathf.Clamp01(value / maximum) * graphRect.height;
+            return new Vector2(x, y);
+        }
+
+        private void DrawGraphLine(Vector2 from, Vector2 to, Color color)
+        {
+            if (graphLineMaterial == null)
+            {
+                Shader shader = Shader.Find("Hidden/Internal-Colored");
+                if (shader == null)
+                {
+                    return;
+                }
+
+                graphLineMaterial = new Material(shader)
+                {
+                    hideFlags = HideFlags.HideAndDontSave
+                };
+                graphLineMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                graphLineMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                graphLineMaterial.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
+                graphLineMaterial.SetInt("_ZWrite", 0);
+            }
+
+            GL.PushMatrix();
+            graphLineMaterial.SetPass(0);
+            GL.LoadPixelMatrix(0f, Screen.width, Screen.height, 0f);
+            GL.Begin(GL.LINES);
+            GL.Color(color);
+            GL.Vertex3(from.x, from.y, 0f);
+            GL.Vertex3(to.x, to.y, 0f);
+            GL.End();
+            GL.PopMatrix();
         }
 
         private void DrawControls()
@@ -230,9 +374,18 @@ namespace EvolutionLab
         private void DrawSelectedCreature()
         {
             GUI.Box(selectedRect, GUIContent.none, panelStyle);
+            if (selectedCreature != null
+                && GUI.Button(
+                    new Rect(selectedRect.x + selectedRect.width - 98f, selectedRect.y + 12f, 82f, 24f),
+                    simulation.IsFollowingSelected ? "Unfollow" : "Follow",
+                    buttonStyle))
+            {
+                simulation.ToggleFollowSelected();
+            }
+
             GUILayout.BeginArea(new Rect(selectedRect.x + 16f, selectedRect.y + 12f, selectedRect.width - 32f, selectedRect.height - 24f));
-            GUILayout.Label("INDIVIDUAL OBSERVATION", headerStyle);
-            GUILayout.Space(8f);
+            GUILayout.Label("INDIVIDUAL OBS.", headerStyle);
+            GUILayout.Space(4f);
 
             if (selectedCreature == null || selectedCreature.Genome == null)
             {
@@ -244,15 +397,45 @@ namespace EvolutionLab
 
             CreatureGenome genome = selectedCreature.Genome;
             GUILayout.Label("Genome ID  " + genome.genomeId, labelStyle);
-            GUILayout.Label("Fitness    " + selectedCreature.Fitness.ToString("0.000"), labelStyle);
-            GUILayout.Label("BodyParts  " + selectedCreature.BodyPartCount, labelStyle);
-            GUILayout.Label("Joints     " + selectedCreature.JointCount, labelStyle);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Fitness " + selectedCreature.Fitness.ToString("0.000"), labelStyle, GUILayout.Width(156f));
+            GUILayout.Label("Parts " + selectedCreature.BodyPartCount, labelStyle);
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Joints " + selectedCreature.JointCount, labelStyle, GUILayout.Width(156f));
             GUILayout.Label("Generation " + genome.generation, labelStyle);
+            GUILayout.EndHorizontal();
             GUILayout.Label("Parent ID  " + (string.IsNullOrEmpty(genome.parentId) ? "Founder" : genome.parentId), smallStyle);
-            GUILayout.Label("Age        " + selectedCreature.AgeSeconds.ToString("0.0") + " s", smallStyle);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Age " + selectedCreature.AgeSeconds.ToString("0.0") + " s", smallStyle, GUILayout.Width(156f));
+            GUILayout.Label("Distance " + selectedCreature.CurrentDistance.ToString("0.000"), smallStyle);
+            GUILayout.EndHorizontal();
             GUILayout.Space(4f);
-            GUILayout.Label("Distance   " + selectedCreature.CurrentDistance.ToString("0.000"), smallStyle);
+            GUILayout.Label("ANCESTRY (newest to oldest)", smallStyle);
+            GUILayout.Label(BuildAncestryLabel(), wrapStyle);
             GUILayout.EndArea();
+        }
+
+        private string BuildAncestryLabel()
+        {
+            IReadOnlyList<IndividualHistoryRecord> ancestry = simulation.SelectedAncestry;
+            if (ancestry == null || ancestry.Count == 0)
+            {
+                return "Not recorded yet.";
+            }
+
+            string label = string.Empty;
+            for (int i = 0; i < ancestry.Count; i++)
+            {
+                if (i > 0)
+                {
+                    label += "  >  ";
+                }
+
+                label += "G" + ancestry[i].generation;
+            }
+
+            return label;
         }
 
         private void DrawSpeedButton(string label, float speed)
@@ -303,6 +486,14 @@ namespace EvolutionLab
             {
                 normal = { background = MakeTexture(new Color(0.12f, 0.42f, 0.52f, 1f)), textColor = Color.white }
             };
+            graphStyle = new GUIStyle(GUI.skin.box)
+            {
+                normal = { background = MakeTexture(new Color(0.02f, 0.035f, 0.05f, 0.92f)) }
+            };
+            wrapStyle = new GUIStyle(smallStyle)
+            {
+                wordWrap = true
+            };
         }
 
         private static Texture2D MakeTexture(Color color)
@@ -320,6 +511,11 @@ namespace EvolutionLab
         {
             DestroyStyleTexture(panelStyle);
             DestroyStyleTexture(selectedButtonStyle);
+            DestroyStyleTexture(graphStyle);
+            if (graphLineMaterial != null)
+            {
+                Destroy(graphLineMaterial);
+            }
         }
 
         private static void DestroyStyleTexture(GUIStyle style)

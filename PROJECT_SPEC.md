@@ -125,7 +125,7 @@ The project already includes Input System, UGUI, AI Navigation, Timeline, Visual
 ### Repository hygiene
 
 - `.gitignore` was missing and is added at the project root with Unity-generated folders/files excluded.
-- The project root is not currently a Git worktree (`git status` reports that it is not a repository). This task does not initialize Git or delete generated folders.
+- The project is Git-managed on the `main` branch with the Unity-oriented `.gitignore`; generated folders remain excluded from version control.
 
 ## 7. Implementation policy for this phase
 
@@ -155,7 +155,8 @@ Prototype 1 is implemented under `Assets/EvolutionLab/Scripts` with runtime boot
 - Genome-defined body-part trees, dimensions, joint limits, drive strength, and brain weights are implemented.
 - Physical rigidbodies, colliders, configurable joints, neural actuation, forward-displacement fitness, selection, crossover, mutation, lineage IDs, and generation history are implemented.
 - Runtime IMGUI exposes generation/population/best/average fitness, pause, x1/x10/x100 speed controls, generation skips, individual inspection, generation-duration controls, and joint-drive tuning.
-- A perspective free camera is available for observation: WASD movement, Q/E vertical movement, right-mouse look, mouse-wheel dolly, and a reset-view command. Camera input is independent of the simulation time scale.
+- Prototype 1.5 adds a bounded per-individual genome history, a best/average fitness graph, primary-parent ancestry display, and a Follow/Unfollow camera command for the selected individual.
+- A perspective free camera is available for observation: WASD movement, Q/E vertical movement, right-mouse look, mouse-wheel dolly, reset-view, and selected-individual follow. Camera input is independent of the simulation time scale.
 - Default evaluation duration is 20 seconds. Joint drive force, target angular speed, damping, and settling duration are serialized simulation parameters and the main values can also be adjusted while running.
 - Unity `6000.5.8f1` Play Mode was exercised through multiple generations, including selection and fast-forward controls.
 - Fixed-population displacement fitness, flat ground, lane isolation, and the fixed-size brain are still explicit Prototype 1 constraints; they are not the final ecology design.

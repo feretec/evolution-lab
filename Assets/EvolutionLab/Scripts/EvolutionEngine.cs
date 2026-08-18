@@ -52,14 +52,69 @@ namespace EvolutionLab
     }
 
     [Serializable]
+    public sealed class IndividualHistoryRecord
+    {
+        public string genomeId = string.Empty;
+        public string parentId = string.Empty;
+        public string secondaryParentId = string.Empty;
+        public int generation;
+        public float fitness;
+        public float distance;
+        public int bodyPartCount;
+        public int jointCount;
+        public bool hasFitness;
+        public CreatureGenome genome;
+
+        public static IndividualHistoryRecord FromGenome(
+            CreatureGenome source,
+            float recordedFitness,
+            float recordedDistance,
+            bool includeFitness)
+        {
+            if (source == null)
+            {
+                return null;
+            }
+
+            source.Repair();
+            return new IndividualHistoryRecord
+            {
+                genomeId = source.genomeId,
+                parentId = source.parentId,
+                secondaryParentId = source.secondaryParentId,
+                generation = source.generation,
+                fitness = recordedFitness,
+                distance = recordedDistance,
+                bodyPartCount = source.bodyParts == null ? 0 : source.bodyParts.Count,
+                jointCount = source.JointCount,
+                hasFitness = includeFitness,
+                genome = source.Clone()
+            };
+        }
+    }
+
+    [Serializable]
     public sealed class SimulationHistory
     {
+        private const int MaxGenerationRecords = 2000;
+        private const int MaxIndividualRecords = 8192;
+
         [SerializeField]
         private List<GenerationRecord> generations = new List<GenerationRecord>();
+
+        [SerializeField]
+        private List<IndividualHistoryRecord> individuals = new List<IndividualHistoryRecord>();
+
+        private Dictionary<string, IndividualHistoryRecord> individualById;
 
         public IReadOnlyList<GenerationRecord> Generations
         {
             get { return generations; }
+        }
+
+        public IReadOnlyList<IndividualHistoryRecord> Individuals
+        {
+            get { return individuals; }
         }
 
         public void Record(GenerationReport report)
@@ -78,10 +133,174 @@ namespace EvolutionLab
                 bestGenomeId = report.bestGenomeId
             });
 
-            // Prototype history is intentionally bounded so a long observation run does not grow forever.
-            if (generations.Count > 2000)
+            // History is intentionally bounded so a long observation run does not grow forever.
+            if (generations.Count > MaxGenerationRecords)
             {
                 generations.RemoveAt(0);
+            }
+        }
+
+        public void RegisterPopulation(IReadOnlyList<CreatureGenome> population)
+        {
+            if (population == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < population.Count; i++)
+            {
+                RegisterGenome(population[i], 0f, 0f, false);
+            }
+        }
+
+        public void RecordIndividuals(IReadOnlyList<CreatureEvaluationResult> results)
+        {
+            if (results == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < results.Count; i++)
+            {
+                CreatureEvaluationResult result = results[i];
+                if (result == null || result.genome == null)
+                {
+                    continue;
+                }
+
+                RegisterGenome(result.genome, result.fitness, result.distance, true);
+            }
+        }
+
+        public bool TryGetIndividual(string genomeId, out IndividualHistoryRecord record)
+        {
+            EnsureIndex();
+            if (string.IsNullOrEmpty(genomeId))
+            {
+                record = null;
+                return false;
+            }
+
+            return individualById.TryGetValue(genomeId, out record);
+        }
+
+        public List<IndividualHistoryRecord> GetAncestry(CreatureGenome currentGenome, int maxDepth)
+        {
+            var ancestry = new List<IndividualHistoryRecord>();
+            if (currentGenome == null || maxDepth <= 0)
+            {
+                return ancestry;
+            }
+
+            var visited = new HashSet<string>();
+            CreatureGenome cursor = currentGenome;
+            for (int depth = 0; cursor != null && depth < maxDepth; depth++)
+            {
+                string cursorId = cursor.genomeId ?? string.Empty;
+                if (!string.IsNullOrEmpty(cursorId) && !visited.Add(cursorId))
+                {
+                    break;
+                }
+
+                IndividualHistoryRecord record;
+                if (!TryGetIndividual(cursorId, out record))
+                {
+                    record = IndividualHistoryRecord.FromGenome(cursor, 0f, 0f, false);
+                }
+
+                if (record == null)
+                {
+                    break;
+                }
+
+                ancestry.Add(record);
+                if (string.IsNullOrEmpty(record.parentId)
+                    || !TryGetIndividual(record.parentId, out IndividualHistoryRecord parentRecord)
+                    || parentRecord == null
+                    || parentRecord.genome == null)
+                {
+                    break;
+                }
+
+                cursor = parentRecord.genome;
+            }
+
+            return ancestry;
+        }
+
+        private void RegisterGenome(
+            CreatureGenome source,
+            float recordedFitness,
+            float recordedDistance,
+            bool includeFitness)
+        {
+            if (source == null || string.IsNullOrEmpty(source.genomeId))
+            {
+                return;
+            }
+
+            EnsureIndex();
+            if (individualById.TryGetValue(source.genomeId, out IndividualHistoryRecord existing))
+            {
+                existing.parentId = source.parentId;
+                existing.secondaryParentId = source.secondaryParentId;
+                existing.generation = source.generation;
+                existing.bodyPartCount = source.bodyParts == null ? 0 : source.bodyParts.Count;
+                existing.jointCount = source.JointCount;
+                existing.genome = source.Clone();
+                if (includeFitness)
+                {
+                    existing.fitness = recordedFitness;
+                    existing.distance = recordedDistance;
+                    existing.hasFitness = true;
+                }
+
+                return;
+            }
+
+            IndividualHistoryRecord record = IndividualHistoryRecord.FromGenome(
+                source,
+                recordedFitness,
+                recordedDistance,
+                includeFitness);
+            if (record == null)
+            {
+                return;
+            }
+
+            individuals.Add(record);
+            individualById.Add(record.genomeId, record);
+            while (individuals.Count > MaxIndividualRecords)
+            {
+                IndividualHistoryRecord oldest = individuals[0];
+                individuals.RemoveAt(0);
+                if (oldest != null && !string.IsNullOrEmpty(oldest.genomeId))
+                {
+                    individualById.Remove(oldest.genomeId);
+                }
+            }
+        }
+
+        private void EnsureIndex()
+        {
+            if (individualById == null)
+            {
+                individualById = new Dictionary<string, IndividualHistoryRecord>();
+            }
+
+            if (individualById.Count == individuals.Count)
+            {
+                return;
+            }
+
+            individualById.Clear();
+            for (int i = 0; i < individuals.Count; i++)
+            {
+                IndividualHistoryRecord record = individuals[i];
+                if (record != null && !string.IsNullOrEmpty(record.genomeId))
+                {
+                    individualById[record.genomeId] = record;
+                }
             }
         }
     }
@@ -120,6 +339,8 @@ namespace EvolutionLab
             {
                 CurrentPopulation.Add(CreatureGenome.CreateFounder(random, Generation, CreateGenomeId(Generation, i)));
             }
+
+            History.RegisterPopulation(CurrentPopulation);
         }
 
         public List<CreatureGenome> BreedNextGeneration(IReadOnlyList<CreatureEvaluationResult> results)
@@ -139,6 +360,7 @@ namespace EvolutionLab
             ranked.Sort((left, right) => right.fitness.CompareTo(left.fitness));
             LastReport = BuildReport(ranked);
             History.Record(LastReport);
+            History.RecordIndividuals(ranked);
 
             int nextGeneration = Generation + 1;
             var nextPopulation = new List<CreatureGenome>(populationSize);
@@ -154,6 +376,7 @@ namespace EvolutionLab
 
                 Generation = nextGeneration;
                 CurrentPopulation = nextPopulation;
+                History.RegisterPopulation(CurrentPopulation);
                 return nextPopulation;
             }
 
@@ -185,6 +408,7 @@ namespace EvolutionLab
 
             Generation = nextGeneration;
             CurrentPopulation = nextPopulation;
+            History.RegisterPopulation(CurrentPopulation);
             return nextPopulation;
         }
 
