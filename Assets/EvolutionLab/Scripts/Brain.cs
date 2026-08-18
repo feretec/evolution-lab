@@ -5,8 +5,8 @@ namespace EvolutionLab
 {
     /// <summary>
     /// Runtime evaluator for the controller encoded by a CreatureGenome.
-    /// The network shape is intentionally small and fixed for Prototype 1;
-    /// the genome boundary allows this evaluator to be replaced later.
+    /// The network shape is intentionally small and fixed for the first prototypes;
+    /// Prototype 2 appends ecological observations without changing the genome boundary.
     /// </summary>
     public sealed class Brain
     {

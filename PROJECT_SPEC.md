@@ -101,7 +101,52 @@ Generation 1 should contain many unstable or ineffective bodies. Across tens to 
 7. Existing URP template assets remain usable; the implementation does not require a new input-action asset with conflicting names.
 8. The project can be opened and compiled in Unity `6000.5.8f1` with no known compile errors.
 
-## 6. Current project baseline (audited before implementation)
+## 6. Prototype 2 — Ecological Survival
+
+Prototype 2 extends the locomotion experiment toward the long-term ecology target without introducing fixed species roles or predation yet.
+
+### Purpose
+
+Verify that a population can change through energy acquisition, metabolism, survival, reproduction, and death while retaining genome/brain/body co-evolution and lineage history.
+
+### Environment
+
+- The flat physical ground remains the temporary test surface.
+- Replenishing `EnergyResource` nodes are physical environment entities. They expose position and energy availability; no “food-seeking” or semantic action is supplied to a creature.
+- Resource placement is deterministic from the simulation seed, with initial resources distributed near founder lanes so the first ecology cycles are observable.
+
+### Life cycle
+
+- A live `Creature` owns runtime-only age, energy, metabolism, movement cost, maturity, reproduction cooldown, offspring count, and death reason.
+- Energy is acquired from nearby resources and consumed by basal metabolism and movement.
+- Starvation and maximum age remove an individual from the live population.
+- Mature, energy-rich individuals reproduce with a nearby compatible live partner when possible; asexual fallback keeps the prototype observable when no partner is close.
+- `EvolutionEngine.CreateOffspring` crosses and mutates parent genomes, while `RecordEcologyCycle` records the current live population. The old fixed-size `BreedNextGeneration` path remains as a compatibility seam for the locomotion prototype.
+- Carrying capacity bounds population growth, but actual population size is determined by births and deaths rather than selecting a fixed number of survivors.
+
+### Prototype 2 UI and history
+
+- Statistics include cycle, population/carrying capacity, survival fitness, births/deaths, average energy, resource availability, and ecology status.
+- Selected individuals expose energy, age, offspring count, and alive/death status in addition to morphology and lineage.
+- Ecology-cycle history records average energy/age and birth/death counts. Individual history records retain lifecycle snapshots for ancestry and extinct-lineage observation.
+- Brain schema version 2 uses the original locomotion observations plus energy/resource observations. Older serialized genomes are repaired into the expanded input shape without changing their lineage identity.
+
+### Explicit limits
+
+- Predation, complex terrain, movable objects, emergent species classification, and multi-world simulation are later phases.
+- Lane collision isolation remains temporarily enabled so Prototype 2 measures resource-driven survival without adding inter-individual physics as a confounding variable. It must be removed or replaced when interaction/predation becomes a selection pressure.
+- History archive load remains observation-only; it does not resume a live physics world, resource timers, or the random stream.
+
+### Prototype 2 acceptance criteria
+
+1. Resources are visible and can be consumed and respawned without compile/runtime errors.
+2. Energy changes over time, starvation/age can kill individuals, and dead bodies leave the live population.
+3. Mature individuals can create mutated offspring with parent IDs and a new lineage generation.
+4. Population count is allowed to move below or above the initial population within carrying capacity.
+5. Pause, speed, cycle interval, ecology skip, and life-tuning controls remain usable.
+6. Cycle and individual history include lifecycle data and remain loadable from older Prototype 1.5 JSON archives.
+
+## 7. Current project baseline (audited before implementation)
 
 ### Unity and rendering
 
@@ -127,28 +172,28 @@ The project already includes Input System, UGUI, AI Navigation, Timeline, Visual
 - `.gitignore` was missing and is added at the project root with Unity-generated folders/files excluded.
 - The project is Git-managed on the `main` branch with the Unity-oriented `.gitignore`; generated folders remain excluded from version control.
 
-## 7. Implementation policy for this phase
+## 8. Implementation policy for this phase
 
 - Keep `SampleScene` as the build entry point for now to avoid a scene-registration omission. A runtime bootstrap creates the prototype world, so the template scene can remain recoverable.
 - Put prototype code under `Assets/EvolutionLab/Scripts` and keep responsibilities separated even though the project currently has no asmdefs.
 - Prefer small, explicit C# classes over speculative framework layers. Add a new abstraction only when it protects a current boundary or a stated future requirement.
-- Mark prototype-only assumptions in comments/TODOs: fixed population, displacement fitness, flat ground, lane isolation, and fixed-size neural output mapping.
-- Do not add food, predator, energy, species, or ecological behavior before the locomotion loop is observable and stable.
+- Mark prototype-only assumptions in comments/TODOs: flat ground, lane isolation, fixed-size neural output mapping, and the simplified resource/reproduction rules.
+- Add ecological entities only through physical state and explicit simulation boundaries; do not encode future predator/prey or species roles as fixed classes.
 
-## 8. Verification policy
+## 9. Verification policy
 
 After changes, verify in this order:
 
 1. C# compilation in Unity or the generated Unity project where available.
 2. Opening `SampleScene` and entering Play Mode.
 3. Visible multi-part organisms on the ground.
-4. At least one generation transition and UI statistic update.
+4. At least one ecology-cycle transition and UI statistic update.
 5. Pause/speed/skip controls and individual selection.
 6. Console/log review for errors and warnings caused by the new code.
 
 The current prototype is complete only when it is observable and interactable, not merely when data classes compile.
 
-## 9. Current implementation status
+## 10. Current implementation status
 
 Prototype 1 is implemented under `Assets/EvolutionLab/Scripts` with runtime bootstrapping from `SampleScene`.
 
@@ -157,7 +202,9 @@ Prototype 1 is implemented under `Assets/EvolutionLab/Scripts` with runtime boot
 - Runtime IMGUI exposes generation/population/best/average fitness, pause, x1/x10/x100 speed controls, generation skips, individual inspection, generation-duration controls, and joint-drive tuning.
 - Prototype 1.5 adds a bounded per-individual genome history, a best/average fitness graph, primary-parent ancestry display, a Follow/Unfollow camera command for the selected individual, historical-genome preview reconstruction, and JSON save/load for the bounded observation archive.
 - Historical previews are rebuilt from cloned `CreatureGenome` data as kinematic, non-colliding displays. Loading an archive restores the recorded history for observation; it does not resume live physics, current population state, or the engine random stream.
+- Prototype 2 adds deterministic energy resources, runtime metabolism and movement cost, age/starvation death, mature reproduction with crossover/mutation, carrying capacity, natural population fluctuation, ecology-cycle reports, lifecycle-aware individual history, and four ecological brain observations.
+- Prototype 2 keeps runtime life state on `Creature`, not on `CreatureGenome`; genome data remains serializable and rebuildable. `EnergyResource` is an environment entity rather than a semantic “food” instruction.
 - A perspective free camera is available for observation: WASD movement, Q/E vertical movement, right-mouse look, mouse-wheel dolly, reset-view, and selected-individual follow. Camera input is independent of the simulation time scale.
 - Default evaluation duration is 20 seconds. Joint drive force, target angular speed, damping, and settling duration are serialized simulation parameters and the main values can also be adjusted while running.
-- Unity `6000.5.8f1` Play Mode was exercised through multiple generations, including selection and fast-forward controls.
-- Fixed-population displacement fitness, flat ground, lane isolation, and the fixed-size brain are still explicit Prototype 1 constraints; they are not the final ecology design.
+- Unity `6000.5.8f1` Play Mode was exercised through multiple ecology cycles, x10 fast-forward, pause/resume, live individual selection, and lifecycle observation; the Unity Console showed no errors caused by the prototype.
+- Flat ground, lane isolation, fixed brain output ceiling, and simplified resource/reproduction rules are still explicit prototype constraints; they are not the final ecology design.

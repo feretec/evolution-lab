@@ -53,7 +53,9 @@ namespace EvolutionLab
     [Serializable]
     public sealed class BrainGene
     {
-        public const int InputCount = 10;
+        // Prototype 2 appends ecological observations after the original
+        // locomotion inputs so old genomes can still be repaired and loaded.
+        public const int InputCount = 14;
         public const int HiddenCount = 8;
         public const int MaxOutputCount = 8;
 
@@ -156,7 +158,7 @@ namespace EvolutionLab
     [Serializable]
     public sealed class CreatureGenome
     {
-        public const int CurrentSchemaVersion = 1;
+        public const int CurrentSchemaVersion = 2;
         public const int MinBodyParts = 2;
         public const int MaxBodyParts = 9;
 

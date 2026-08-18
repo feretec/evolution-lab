@@ -4,7 +4,7 @@ using UnityEngine;
 namespace EvolutionLab
 {
     /// <summary>
-    /// Small runtime presentation layer for Prototype 1.
+    /// Small runtime presentation layer for the Prototype 2 ecology loop.
     /// IMGUI keeps the blank template scene free from serialized UI assets.
     /// </summary>
     public sealed class EvolutionLabUI : MonoBehaviour
@@ -55,10 +55,10 @@ namespace EvolutionLab
             EnsureStyles();
             float width = Mathf.Max(960f, Screen.width);
             float height = Mathf.Max(540f, Screen.height);
-            statsRect = new Rect(18f, 18f, 350f, 190f);
+            statsRect = new Rect(18f, 18f, 360f, 238f);
             controlsRect = new Rect(width - 368f, 18f, 350f, height - 36f);
-            float selectedHeight = Mathf.Clamp(height * 0.27f, 230f, 285f);
-            selectedRect = new Rect(18f, height - selectedHeight - 18f, 350f, selectedHeight);
+            float selectedHeight = Mathf.Clamp(height * 0.33f, 270f, 330f);
+            selectedRect = new Rect(18f, height - selectedHeight - 18f, 360f, selectedHeight);
             float historyWidth = Mathf.Max(220f, controlsRect.x - statsRect.xMax - 24f);
             historyRect = new Rect(statsRect.xMax + 12f, statsRect.y, historyWidth, statsRect.height);
 
@@ -71,19 +71,30 @@ namespace EvolutionLab
         private void DrawStatistics()
         {
             GUI.Box(statsRect, GUIContent.none, panelStyle);
-            GUILayout.BeginArea(new Rect(statsRect.x + 16f, statsRect.y + 12f, statsRect.width - 32f, statsRect.height - 24f));
-            GUILayout.Label("EVOLUTION LAB", headerStyle);
-            GUILayout.Label("MORPHOLOGICAL LOCOMOTION", smallStyle);
-            GUILayout.Space(8f);
-            GUILayout.Label("Generation     " + simulation.Generation, labelStyle);
-            GUILayout.Label("Population     " + simulation.PopulationCount, labelStyle);
-            GUILayout.Label("Best fitness   " + simulation.BestFitness.ToString("0.000"), labelStyle);
-            GUILayout.Label("Average fitness " + simulation.AverageFitness.ToString("0.000"), labelStyle);
-            GUILayout.Space(4f);
-            GUILayout.Label(
-                "Evaluation     " + simulation.EvaluationElapsed.ToString("0.0") + " / " + simulation.GenerationDuration.ToString("0.0") + " s",
+            Rect content = new Rect(statsRect.x + 16f, statsRect.y + 12f, statsRect.width - 32f, statsRect.height - 24f);
+            GUI.Label(new Rect(content.x, content.y, content.width, 22f), "EVOLUTION LAB", headerStyle);
+            GUI.Label(new Rect(content.x, content.y + 22f, content.width, 16f), "MORPHOLOGICAL ECOLOGY", smallStyle);
+            GUI.Label(new Rect(content.x, content.y + 42f, content.width, 18f), "Cycle          " + simulation.Generation, labelStyle);
+            GUI.Label(
+                new Rect(content.x, content.y + 60f, content.width, 18f),
+                "Population     " + simulation.PopulationCount + " / " + simulation.CarryingCapacity,
+                labelStyle);
+            GUI.Label(new Rect(content.x, content.y + 78f, content.width, 18f), "Best survival  " + simulation.BestFitness.ToString("0.000"), labelStyle);
+            GUI.Label(new Rect(content.x, content.y + 96f, content.width, 18f), "Average survival " + simulation.AverageFitness.ToString("0.000"), labelStyle);
+            GUI.Label(
+                new Rect(content.x, content.y + 114f, content.width, 16f),
+                "Births / deaths " + simulation.BirthsThisCycle + " / " + simulation.DeathsThisCycle,
                 smallStyle);
-            GUILayout.EndArea();
+            GUI.Label(new Rect(content.x, content.y + 130f, content.width, 16f), "Average energy " + simulation.AverageEnergy.ToString("0.0"), smallStyle);
+            GUI.Label(
+                new Rect(content.x, content.y + 146f, content.width, 16f),
+                "Resources      " + simulation.AvailableResourceCount + " / " + simulation.ResourceCount,
+                smallStyle);
+            GUI.Label(
+                new Rect(content.x, content.y + 162f, content.width, 16f),
+                "Cycle time     " + simulation.EvaluationElapsed.ToString("0.0") + " / " + simulation.GenerationDuration.ToString("0.0") + " s",
+                smallStyle);
+            GUI.Label(new Rect(content.x, content.y + 180f, content.width, 30f), simulation.EcologyStatus, wrapStyle);
         }
 
         private void DrawHistory()
@@ -103,7 +114,7 @@ namespace EvolutionLab
             int recordCount = records == null ? 0 : records.Count;
             GUI.Label(
                 new Rect(historyRect.x + 16f, historyRect.y + 31f, historyRect.width - 32f, 18f),
-                "Completed generations  " + recordCount,
+                "Completed ecology cycles  " + recordCount,
                 smallStyle);
 
             if (recordCount == 0)
@@ -228,7 +239,7 @@ namespace EvolutionLab
                 controlsRect.y + 8f,
                 controlsRect.width - 16f,
                 controlsRect.height - 78f);
-            Rect contentRect = new Rect(0f, 0f, viewportRect.width - 18f, 860f);
+            Rect contentRect = new Rect(0f, 0f, viewportRect.width - 18f, 1020f);
             controlsScrollPosition = GUI.BeginScrollView(viewportRect, controlsScrollPosition, contentRect);
             GUILayout.BeginArea(new Rect(8f, 8f, contentRect.width - 16f, contentRect.height - 16f));
             GUILayout.Label("SIMULATION CONTROLS", headerStyle);
@@ -248,7 +259,7 @@ namespace EvolutionLab
             GUILayout.EndHorizontal();
 
             GUILayout.Space(8f);
-            GUILayout.Label("Generation skip", smallStyle);
+            GUILayout.Label("Ecology cycle skip", smallStyle);
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("+1", buttonStyle, GUILayout.Height(28f)))
             {
@@ -269,9 +280,9 @@ namespace EvolutionLab
             GUILayout.Label("Queued: " + simulation.PendingGenerationSkips, smallStyle);
 
             GUILayout.Space(6f);
-            GUILayout.Label("EVALUATION WINDOW", smallStyle);
+            GUILayout.Label("ECOLOGY CYCLE", smallStyle);
             GUILayout.Label(
-                "Generation duration  " + simulation.GenerationDuration.ToString("0.0") + " s",
+                "Cycle interval      " + simulation.GenerationDuration.ToString("0.0") + " s",
                 labelStyle);
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("-5 s", buttonStyle, GUILayout.Height(25f)))
@@ -287,6 +298,52 @@ namespace EvolutionLab
             if (GUILayout.Button("+5 s", buttonStyle, GUILayout.Height(25f)))
             {
                 simulation.AdjustGenerationDuration(5f);
+            }
+
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(6f);
+            GUILayout.Label("LIFE & REPRODUCTION", smallStyle);
+            GUILayout.Label(
+                "Metabolism         " + simulation.MetabolismPerSecond.ToString("0.00") + " / s",
+                labelStyle);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Met -0.05", buttonStyle, GUILayout.Height(24f)))
+            {
+                simulation.AdjustMetabolism(-0.05f);
+            }
+
+            if (GUILayout.Button("Met +0.05", buttonStyle, GUILayout.Height(24f)))
+            {
+                simulation.AdjustMetabolism(0.05f);
+            }
+
+            GUILayout.EndHorizontal();
+            GUILayout.Label(
+                "Reproduction      " + simulation.ReproductionEnergyThreshold.ToString("0") + " energy",
+                labelStyle);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Threshold -5", buttonStyle, GUILayout.Height(24f)))
+            {
+                simulation.AdjustReproductionEnergyThreshold(-5f);
+            }
+
+            if (GUILayout.Button("Threshold +5", buttonStyle, GUILayout.Height(24f)))
+            {
+                simulation.AdjustReproductionEnergyThreshold(5f);
+            }
+
+            GUILayout.EndHorizontal();
+            GUILayout.Label("Maximum age       " + simulation.MaxAgeSeconds.ToString("0") + " s", labelStyle);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Age -10", buttonStyle, GUILayout.Height(24f)))
+            {
+                simulation.AdjustMaxAge(-10f);
+            }
+
+            if (GUILayout.Button("Age +10", buttonStyle, GUILayout.Height(24f)))
+            {
+                simulation.AdjustMaxAge(10f);
             }
 
             GUILayout.EndHorizontal();
@@ -453,7 +510,7 @@ namespace EvolutionLab
             CreatureGenome genome = selectedCreature.Genome;
             GUILayout.Label("Genome ID  " + genome.genomeId, labelStyle);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Fitness " + selectedCreature.Fitness.ToString("0.000"), labelStyle, GUILayout.Width(156f));
+            GUILayout.Label("Survival " + selectedCreature.SurvivalFitness.ToString("0.000"), labelStyle, GUILayout.Width(156f));
             GUILayout.Label("Parts " + selectedCreature.BodyPartCount, labelStyle);
             GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();
@@ -462,9 +519,19 @@ namespace EvolutionLab
             GUILayout.EndHorizontal();
             GUILayout.Label("Parent ID  " + (string.IsNullOrEmpty(genome.parentId) ? "Founder" : genome.parentId), smallStyle);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Age " + selectedCreature.AgeSeconds.ToString("0.0") + " s", smallStyle, GUILayout.Width(156f));
+            GUILayout.Label(
+                "Energy " + selectedCreature.Energy.ToString("0.0") + " / " + selectedCreature.MaxEnergy.ToString("0.0"),
+                smallStyle,
+                GUILayout.Width(156f));
             GUILayout.Label("Distance " + selectedCreature.CurrentDistance.ToString("0.000"), smallStyle);
             GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Age " + selectedCreature.AgeSeconds.ToString("0.0") + " s", smallStyle, GUILayout.Width(156f));
+            GUILayout.Label("Offspring " + selectedCreature.OffspringCount, smallStyle);
+            GUILayout.EndHorizontal();
+            GUILayout.Label(
+                "Status " + (selectedCreature.IsAlive ? "Alive" : selectedCreature.DeathReason),
+                smallStyle);
             GUILayout.Space(4f);
             GUILayout.Label("ANCESTRY (newest to oldest)", smallStyle);
             GUILayout.Label(BuildAncestryLabel(), wrapStyle);

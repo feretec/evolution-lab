@@ -29,8 +29,24 @@ namespace EvolutionLab
         private float startX;
         private float bestX;
         private float brainClock;
+        private float lifeAgeSeconds;
+        private float energy;
+        private float maxEnergy = 100f;
+        private float metabolismPerSecond = 0.35f;
+        private float movementEnergyCost = 0.02f;
+        private float maxAgeSeconds = 90f;
+        private float maturityAgeSeconds = 5f;
+        private float reproductionEnergyThreshold = 78f;
+        private float reproductionCost = 42f;
+        private float reproductionCooldownSeconds = 8f;
+        private float reproductionCooldownRemaining;
+        private float totalEnergyAcquired;
+        private int offspringCount;
         private bool evaluationActive;
+        private bool alive;
         private bool selected;
+        private string deathReason = string.Empty;
+        private Func<Vector3, Vector3> resourcePositionProvider;
 
         public event Action<Creature> Clicked;
 
@@ -44,7 +60,35 @@ namespace EvolutionLab
 
         public int JointCount { get { return joints.Count; } }
 
-        public float AgeSeconds { get { return brainClock; } }
+        public float AgeSeconds { get { return lifeAgeSeconds; } }
+
+        public float Energy { get { return energy; } }
+
+        public float MaxEnergy { get { return maxEnergy; } }
+
+        public float EnergyRatio
+        {
+            get { return maxEnergy <= 0f ? 0f : Mathf.Clamp01(energy / maxEnergy); }
+        }
+
+        public bool IsAlive { get { return alive; } }
+
+        public string DeathReason { get { return deathReason; } }
+
+        public int OffspringCount { get { return offspringCount; } }
+
+        public float TotalEnergyAcquired { get { return totalEnergyAcquired; } }
+
+        public bool CanReproduce
+        {
+            get
+            {
+                return alive
+                    && lifeAgeSeconds >= maturityAgeSeconds
+                    && reproductionCooldownRemaining <= 0f
+                    && energy >= reproductionEnergyThreshold;
+            }
+        }
 
         public float CurrentDistance
         {
@@ -54,6 +98,19 @@ namespace EvolutionLab
         public float Fitness
         {
             get { return CurrentDistance; }
+        }
+
+        public float SurvivalFitness
+        {
+            get
+            {
+                return Mathf.Max(
+                    0f,
+                    lifeAgeSeconds
+                    + offspringCount * 30f
+                    + energy * 0.1f
+                    + CurrentDistance * 0.2f);
+            }
         }
 
         public IReadOnlyList<Collider> Colliders
@@ -133,6 +190,117 @@ namespace EvolutionLab
                 initialDamping,
                 initialSettlingDuration);
             SetSelected(false);
+            alive = false;
+            deathReason = string.Empty;
+        }
+
+        public void ConfigureLife(
+            float initialEnergy,
+            float initialMaxEnergy,
+            float initialMetabolismPerSecond,
+            float initialMovementEnergyCost,
+            float initialMaxAgeSeconds,
+            float initialMaturityAgeSeconds,
+            float initialReproductionEnergyThreshold,
+            float initialReproductionCost,
+            float initialReproductionCooldownSeconds)
+        {
+            maxEnergy = Mathf.Max(1f, initialMaxEnergy);
+            energy = Mathf.Clamp(initialEnergy, 0f, maxEnergy);
+            metabolismPerSecond = Mathf.Max(0f, initialMetabolismPerSecond);
+            movementEnergyCost = Mathf.Max(0f, initialMovementEnergyCost);
+            maxAgeSeconds = Mathf.Max(1f, initialMaxAgeSeconds);
+            maturityAgeSeconds = Mathf.Clamp(initialMaturityAgeSeconds, 0f, maxAgeSeconds);
+            reproductionEnergyThreshold = Mathf.Clamp(
+                initialReproductionEnergyThreshold,
+                0f,
+                maxEnergy);
+            reproductionCost = Mathf.Clamp(initialReproductionCost, 0f, maxEnergy);
+            reproductionCooldownSeconds = Mathf.Max(0f, initialReproductionCooldownSeconds);
+            reproductionCooldownRemaining = 0f;
+            lifeAgeSeconds = 0f;
+            totalEnergyAcquired = 0f;
+            offspringCount = 0;
+            deathReason = string.Empty;
+            alive = true;
+        }
+
+        public void SetLifeTuning(
+            float initialMetabolismPerSecond,
+            float initialMaxAgeSeconds,
+            float initialMaturityAgeSeconds,
+            float initialReproductionEnergyThreshold,
+            float initialReproductionCost,
+            float initialReproductionCooldownSeconds)
+        {
+            metabolismPerSecond = Mathf.Max(0f, initialMetabolismPerSecond);
+            maxAgeSeconds = Mathf.Max(1f, initialMaxAgeSeconds);
+            maturityAgeSeconds = Mathf.Clamp(initialMaturityAgeSeconds, 0f, maxAgeSeconds);
+            reproductionEnergyThreshold = Mathf.Clamp(
+                initialReproductionEnergyThreshold,
+                0f,
+                maxEnergy);
+            reproductionCost = Mathf.Clamp(initialReproductionCost, 0f, maxEnergy);
+            reproductionCooldownSeconds = Mathf.Max(0f, initialReproductionCooldownSeconds);
+        }
+
+        public void SetResourceSensor(Func<Vector3, Vector3> provider)
+        {
+            resourcePositionProvider = provider;
+        }
+
+        public void TickLife(float deltaTime, float energyGained)
+        {
+            if (!alive || deltaTime <= 0f)
+            {
+                return;
+            }
+
+            lifeAgeSeconds += deltaTime;
+            reproductionCooldownRemaining = Mathf.Max(
+                0f,
+                reproductionCooldownRemaining - deltaTime);
+            float speed = rootBody == null || !IsFinite(rootBody.linearVelocity)
+                ? 0f
+                : rootBody.linearVelocity.magnitude;
+            float energySpent = (metabolismPerSecond + speed * movementEnergyCost) * deltaTime;
+            float safeEnergyGained = Mathf.Max(0f, IsFinite(energyGained) ? energyGained : 0f);
+            energy = Mathf.Clamp(energy + safeEnergyGained - energySpent, 0f, maxEnergy);
+            totalEnergyAcquired += safeEnergyGained;
+
+            if (energy <= 0.001f)
+            {
+                Die("Starvation");
+            }
+            else if (lifeAgeSeconds >= maxAgeSeconds)
+            {
+                Die("Old age");
+            }
+        }
+
+        public bool TrySpendReproductionCost()
+        {
+            if (!CanReproduce || energy < reproductionCost)
+            {
+                return false;
+            }
+
+            energy = Mathf.Max(0f, energy - reproductionCost);
+            reproductionCooldownRemaining = reproductionCooldownSeconds;
+            offspringCount++;
+            return true;
+        }
+
+        public void Die(string reason)
+        {
+            if (!alive)
+            {
+                return;
+            }
+
+            alive = false;
+            deathReason = string.IsNullOrEmpty(reason) ? "Unknown" : reason;
+            StopEvaluation();
         }
 
         public void SetPhysicsTuning(
@@ -175,6 +343,9 @@ namespace EvolutionLab
             startX = rootBody.position.x;
             bestX = startX;
             brainClock = 0f;
+            lifeAgeSeconds = 0f;
+            alive = true;
+            deathReason = string.Empty;
             evaluationActive = true;
             DisableMotors();
         }
@@ -233,7 +404,15 @@ namespace EvolutionLab
         public CreatureEvaluationResult CaptureEvaluation()
         {
             float distance = CurrentDistance;
-            return new CreatureEvaluationResult(Genome, distance, distance);
+            return new CreatureEvaluationResult(
+                Genome,
+                SurvivalFitness,
+                distance,
+                energy,
+                lifeAgeSeconds,
+                offspringCount,
+                deathReason,
+                alive);
         }
 
         public void SetSelected(bool value)
@@ -386,6 +565,20 @@ namespace EvolutionLab
             Vector3 angularVelocity = IsFinite(rootBody.angularVelocity) ? rootBody.angularVelocity : Vector3.zero;
             float tilt = SafeClamp(Vector3.Dot(rootBody.transform.up, Vector3.up), -1f, 1f);
             float height = SafeClamp((rootBody.position.y - 0.45f) / 2.5f, -1f, 1f);
+            Vector3 localResourceDirection = Vector3.zero;
+            float resourceProximity = 0f;
+            if (resourcePositionProvider != null)
+            {
+                Vector3 resourcePosition = resourcePositionProvider(rootBody.position);
+                Vector3 toResource = resourcePosition - rootBody.position;
+                if (IsFinite(toResource) && toResource.sqrMagnitude > 0.0001f)
+                {
+                    float resourceDistance = toResource.magnitude;
+                    localResourceDirection = rootBody.transform.InverseTransformDirection(
+                        toResource / resourceDistance);
+                    resourceProximity = SafeClamp(1f - resourceDistance / 12f, 0f, 1f);
+                }
+            }
 
             return new[]
             {
@@ -398,7 +591,11 @@ namespace EvolutionLab
                 Mathf.Sin(brainClock * 2.15f),
                 Mathf.Cos(brainClock * 2.15f),
                 height,
-                1f
+                1f,
+                EnergyRatio * 2f - 1f,
+                SafeClamp(localResourceDirection.x, -1f, 1f),
+                SafeClamp(localResourceDirection.z, -1f, 1f),
+                resourceProximity * 2f - 1f
             };
         }
 

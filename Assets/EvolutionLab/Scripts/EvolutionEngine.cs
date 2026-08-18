@@ -10,12 +10,38 @@ namespace EvolutionLab
         public CreatureGenome genome;
         public float fitness;
         public float distance;
+        public float energy;
+        public float age;
+        public int offspringCount;
+        public string deathReason = string.Empty;
+        public bool alive;
 
         public CreatureEvaluationResult(CreatureGenome genome, float fitness, float distance)
         {
             this.genome = genome;
             this.fitness = fitness;
             this.distance = distance;
+            alive = true;
+        }
+
+        public CreatureEvaluationResult(
+            CreatureGenome genome,
+            float fitness,
+            float distance,
+            float energy,
+            float age,
+            int offspringCount,
+            string deathReason,
+            bool alive)
+        {
+            this.genome = genome;
+            this.fitness = fitness;
+            this.distance = distance;
+            this.energy = energy;
+            this.age = age;
+            this.offspringCount = offspringCount;
+            this.deathReason = deathReason ?? string.Empty;
+            this.alive = alive;
         }
     }
 
@@ -27,6 +53,10 @@ namespace EvolutionLab
         public float bestFitness;
         public float averageFitness;
         public string bestGenomeId = string.Empty;
+        public int births;
+        public int deaths;
+        public float averageEnergy;
+        public float averageAge;
 
         public GenerationReport Clone()
         {
@@ -36,7 +66,11 @@ namespace EvolutionLab
                 population = population,
                 bestFitness = bestFitness,
                 averageFitness = averageFitness,
-                bestGenomeId = bestGenomeId
+                bestGenomeId = bestGenomeId,
+                births = births,
+                deaths = deaths,
+                averageEnergy = averageEnergy,
+                averageAge = averageAge
             };
         }
     }
@@ -49,6 +83,10 @@ namespace EvolutionLab
         public float bestFitness;
         public float averageFitness;
         public string bestGenomeId = string.Empty;
+        public int births;
+        public int deaths;
+        public float averageEnergy;
+        public float averageAge;
 
         public GenerationRecord Clone()
         {
@@ -58,7 +96,11 @@ namespace EvolutionLab
                 population = population,
                 bestFitness = bestFitness,
                 averageFitness = averageFitness,
-                bestGenomeId = bestGenomeId
+                bestGenomeId = bestGenomeId,
+                births = births,
+                deaths = deaths,
+                averageEnergy = averageEnergy,
+                averageAge = averageAge
             };
         }
     }
@@ -75,13 +117,23 @@ namespace EvolutionLab
         public int bodyPartCount;
         public int jointCount;
         public bool hasFitness;
+        public float energy;
+        public float age;
+        public int offspringCount;
+        public string deathReason = string.Empty;
+        public bool wasAlive;
         public CreatureGenome genome;
 
         public static IndividualHistoryRecord FromGenome(
             CreatureGenome source,
             float recordedFitness,
             float recordedDistance,
-            bool includeFitness)
+            bool includeFitness,
+            float recordedEnergy = 0f,
+            float recordedAge = 0f,
+            int recordedOffspringCount = 0,
+            string recordedDeathReason = "",
+            bool recordedAlive = true)
         {
             if (source == null)
             {
@@ -100,6 +152,11 @@ namespace EvolutionLab
                 bodyPartCount = source.bodyParts == null ? 0 : source.bodyParts.Count,
                 jointCount = source.JointCount,
                 hasFitness = includeFitness,
+                energy = recordedEnergy,
+                age = recordedAge,
+                offspringCount = recordedOffspringCount,
+                deathReason = recordedDeathReason ?? string.Empty,
+                wasAlive = recordedAlive,
                 genome = source.Clone()
             };
         }
@@ -230,7 +287,11 @@ namespace EvolutionLab
                 population = report.population,
                 bestFitness = report.bestFitness,
                 averageFitness = report.averageFitness,
-                bestGenomeId = report.bestGenomeId
+                bestGenomeId = report.bestGenomeId,
+                births = report.births,
+                deaths = report.deaths,
+                averageEnergy = report.averageEnergy,
+                averageAge = report.averageAge
             });
 
             // History is intentionally bounded so a long observation run does not grow forever.
@@ -268,8 +329,27 @@ namespace EvolutionLab
                     continue;
                 }
 
-                RegisterGenome(result.genome, result.fitness, result.distance, true);
+                RegisterGenome(
+                    result.genome,
+                    result.fitness,
+                    result.distance,
+                    true,
+                    result.energy,
+                    result.age,
+                    result.offspringCount,
+                    result.deathReason,
+                    result.alive);
             }
+        }
+
+        public void RecordIndividual(CreatureEvaluationResult result)
+        {
+            if (result == null || result.genome == null)
+            {
+                return;
+            }
+
+            RecordIndividuals(new[] { result });
         }
 
         public bool TryGetIndividual(string genomeId, out IndividualHistoryRecord record)
@@ -332,7 +412,12 @@ namespace EvolutionLab
             CreatureGenome source,
             float recordedFitness,
             float recordedDistance,
-            bool includeFitness)
+            bool includeFitness,
+            float recordedEnergy = 0f,
+            float recordedAge = 0f,
+            int recordedOffspringCount = 0,
+            string recordedDeathReason = "",
+            bool recordedAlive = true)
         {
             if (source == null || string.IsNullOrEmpty(source.genomeId))
             {
@@ -353,6 +438,11 @@ namespace EvolutionLab
                     existing.fitness = recordedFitness;
                     existing.distance = recordedDistance;
                     existing.hasFitness = true;
+                    existing.energy = recordedEnergy;
+                    existing.age = recordedAge;
+                    existing.offspringCount = recordedOffspringCount;
+                    existing.deathReason = recordedDeathReason ?? string.Empty;
+                    existing.wasAlive = recordedAlive;
                 }
 
                 return;
@@ -362,7 +452,12 @@ namespace EvolutionLab
                 source,
                 recordedFitness,
                 recordedDistance,
-                includeFitness);
+                includeFitness,
+                recordedEnergy,
+                recordedAge,
+                recordedOffspringCount,
+                recordedDeathReason,
+                recordedAlive);
             if (record == null)
             {
                 return;
@@ -422,6 +517,11 @@ namespace EvolutionLab
                 bodyPartCount = source.bodyPartCount,
                 jointCount = source.jointCount,
                 hasFitness = source.hasFitness,
+                energy = source.energy,
+                age = source.age,
+                offspringCount = source.offspringCount,
+                deathReason = source.deathReason,
+                wasAlive = source.wasAlive,
                 genome = source.genome.Clone()
             };
         }
@@ -534,6 +634,74 @@ namespace EvolutionLab
             return nextPopulation;
         }
 
+        /// <summary>
+        /// Creates one naturally born child without replacing the whole population.
+        /// Prototype 1.5 keeps using BreedNextGeneration; Prototype 2 uses this
+        /// smaller birth operation so population size can emerge from life events.
+        /// </summary>
+        public CreatureGenome CreateOffspring(CreatureGenome first, CreatureGenome second)
+        {
+            CreatureGenome a = first ?? second;
+            CreatureGenome b = second ?? first;
+            int firstGeneration = a == null ? 1 : a.generation;
+            int secondGeneration = b == null ? firstGeneration : b.generation;
+            int childGeneration = Mathf.Max(firstGeneration, secondGeneration) + 1;
+            CreatureGenome child = CreatureGenome.Crossover(
+                a,
+                b,
+                random,
+                childGeneration,
+                CreateGenomeId(childGeneration, CurrentPopulation.Count));
+            child.Mutate(random);
+            child.Repair();
+            CurrentPopulation.Add(child);
+            History.RegisterPopulation(new[] { child });
+            return child;
+        }
+
+        public void RemovePopulationGenome(CreatureGenome genome)
+        {
+            if (genome == null || CurrentPopulation == null)
+            {
+                return;
+            }
+
+            for (int i = CurrentPopulation.Count - 1; i >= 0; i--)
+            {
+                if (CurrentPopulation[i] != null && CurrentPopulation[i].genomeId == genome.genomeId)
+                {
+                    CurrentPopulation.RemoveAt(i);
+                    break;
+                }
+            }
+        }
+
+        public void RecordEcologyCycle(
+            IReadOnlyList<CreatureEvaluationResult> results,
+            int births,
+            int deaths)
+        {
+            var observed = new List<CreatureEvaluationResult>();
+            if (results != null)
+            {
+                for (int i = 0; i < results.Count; i++)
+                {
+                    if (results[i] != null && results[i].genome != null)
+                    {
+                        observed.Add(results[i]);
+                    }
+                }
+            }
+
+            observed.Sort((left, right) => right.fitness.CompareTo(left.fitness));
+            LastReport = BuildReport(observed);
+            LastReport.births = Mathf.Max(0, births);
+            LastReport.deaths = Mathf.Max(0, deaths);
+            History.Record(LastReport);
+            History.RecordIndividuals(observed);
+            Generation++;
+        }
+
         private GenerationReport BuildReport(List<CreatureEvaluationResult> ranked)
         {
             if (ranked.Count == 0)
@@ -560,8 +728,42 @@ namespace EvolutionLab
                 population = ranked.Count,
                 bestFitness = ranked[0].fitness,
                 averageFitness = total / ranked.Count,
-                bestGenomeId = ranked[0].genome.genomeId
+                bestGenomeId = ranked[0].genome.genomeId,
+                averageEnergy = AverageEnergy(ranked),
+                averageAge = AverageAge(ranked)
             };
+        }
+
+        private static float AverageEnergy(List<CreatureEvaluationResult> results)
+        {
+            if (results == null || results.Count == 0)
+            {
+                return 0f;
+            }
+
+            float total = 0f;
+            for (int i = 0; i < results.Count; i++)
+            {
+                total += Mathf.Max(0f, results[i].energy);
+            }
+
+            return total / results.Count;
+        }
+
+        private static float AverageAge(List<CreatureEvaluationResult> results)
+        {
+            if (results == null || results.Count == 0)
+            {
+                return 0f;
+            }
+
+            float total = 0f;
+            for (int i = 0; i < results.Count; i++)
+            {
+                total += Mathf.Max(0f, results[i].age);
+            }
+
+            return total / results.Count;
         }
 
         private CreatureGenome PickParent(List<CreatureEvaluationResult> ranked)

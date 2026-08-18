@@ -1,6 +1,6 @@
-# Evolution Lab — Prototype 1 Architecture
+# Evolution Lab — Prototype 2 Architecture
 
-This document turns `PROJECT_SPEC.md` into a concrete first implementation while keeping the long-term boundaries visible.
+This document turns `PROJECT_SPEC.md` into the current GameObject/C# implementation while keeping the long-term ecology and high-performance replacement seams visible.
 
 ## 1. Runtime flow
 
@@ -14,11 +14,11 @@ CreatureGenome (pure data)
                                                     ├── physical observation
                                                     └── forward displacement result
 
-EvolutionSimulation ──> EvolutionEngine ──> next generation genomes
+EvolutionSimulation ──> EvolutionEngine ──> offspring genomes / cycle reports
         │                         │
-        ├── EnvironmentController │
+        ├── EnvironmentController ──> EnergyResource entities
         ├── EvolutionLabUI        └── SimulationHistory
-        └── selection/camera/input
+        └── lifecycle / selection / camera / input
 ```
 
 The simulation owns the evaluation loop. The UI reads snapshots and sends commands; it does not select or mutate genomes itself.
@@ -46,25 +46,29 @@ The builder is deliberately replaceable: a future ECS/Burst builder can consume 
 
 Runtime embodiment and evaluation adapter. It owns the live rigidbodies/joints, constructs controller observations, applies brain outputs to joint drives, tracks start position and best forward progress, exposes an immutable evaluation result, and routes selection clicks.
 
-The prototype uses `FixedUpdate` for controller actuation so physics remains the source of movement. The class must not contain population selection or UI layout logic.
+The prototype uses `FixedUpdate` for controller actuation and life accounting so physics remains the source of movement. Runtime-only age, energy, metabolism, reproduction cooldown, offspring count, and death reason live here; they are not written into `CreatureGenome`. The class must not contain population selection or UI layout logic.
 
 ### `Brain`
 
-Runtime evaluator for the brain gene. Prototype 1 uses a small tanh feed-forward network with a fixed input count and up to eight actuator outputs. The fixed output ceiling is a prototype constraint; the genome still owns the values so future variable topology can replace it without changing `CreatureGenome`'s role.
+Runtime evaluator for the brain gene. The first prototypes use a small tanh feed-forward network with fourteen inputs: ten locomotion observations plus energy ratio, nearest-resource direction x/z, and resource proximity. It retains up to eight actuator outputs. The fixed output ceiling and expanded input shape are prototype constraints; the genome still owns the values so future variable topology can replace them without changing `CreatureGenome`'s role.
 
 ### `EvolutionEngine`
 
-Pure-ish population logic. It initializes founders, ranks evaluation results, computes best/average statistics, keeps elites, mixes compatible parent genes, mutates children, advances generations, and appends generation records to `SimulationHistory`.
+Pure-ish population logic. It initializes founders, ranks evaluation results, computes survival/energy statistics, keeps elites, mixes compatible parent genes, mutates children, advances ecology cycles, and appends cycle records to `SimulationHistory`. `CreateOffspring` is the natural-birth boundary and `RecordEcologyCycle` records the live population. The older `BreedNextGeneration` method remains for Prototype 1 compatibility.
 
-The engine does not instantiate GameObjects and does not know about cameras or UI. Prototype 1 uses fixed population size and displacement fitness; those policies are isolated here for later replacement.
+The engine does not instantiate GameObjects and does not know about cameras or UI. Genome/lineage changes are separate from runtime life state, so a future ECS/Burst simulation can reuse the same data boundary.
 
 ### `EnvironmentController`
 
-Creates the flat ground and owns environment-level setup. It exposes no semantic target to the organisms. Future terrain, water, obstacles, and movable objects should be added here or in separate environment components.
+Creates the flat ground and owns environment-level setup. It spawns deterministic, replenishing `EnergyResource` entities and answers only physical queries: nearest available resource position and energy consumed within a radius. It exposes no semantic target to the organisms. Future terrain, water, obstacles, and movable objects should be added here or in separate environment components.
+
+### `EnergyResource`
+
+Runtime environment entity with an energy amount, trigger collider, renderer state, and respawn timer. Consumption is resolved by `EnvironmentController` using physical distance so the organism is not handed a goal label or a special “food” behavior.
 
 ### `SimulationHistory`
 
-Stores generation-level records and bounded per-individual genome snapshots in a lightweight in-memory form. Each evaluated individual keeps its genome ID, parent IDs, generation, morphology counts, fitness, and a cloned genome, so an active creature can resolve a primary ancestry chain without depending on destroyed GameObjects. Generation records are capped at 2000 and individual snapshots at 8192 for long observation runs. Prototype 1.5 can serialize this bounded observation history as JSON and load it back without serializing live GameObjects, physics state, or the engine's random stream.
+Stores cycle-level records and bounded per-individual genome snapshots in a lightweight in-memory form. Each evaluated individual keeps its genome ID, parent IDs, generation, morphology counts, survival fitness, energy, age, offspring count, alive/death status, and a cloned genome, so an active or extinct creature can resolve a primary ancestry chain without depending on destroyed GameObjects. Generation records are capped at 2000 and individual snapshots at 8192 for long observation runs. The bounded observation history serializes lifecycle data as JSON but does not serialize live GameObjects, physics state, resource timers, or the engine's random stream.
 
 ### `EvolutionSimulation`
 
@@ -72,13 +76,13 @@ Scene-facing coordinator. It boots the engine, spawns and destroys embodiments, 
 
 ### `EvolutionLabUI`
 
-Prototype presentation layer implemented with runtime IMGUI. It renders statistics, a best/average fitness history graph, time controls, generation skip controls, selected-individual details, a compact ancestry chain, historical-genome preview controls, and history archive save/load controls. It never mutates a genome directly.
+Prototype presentation layer implemented with runtime IMGUI. It renders ecology statistics, a best/average survival history graph, time controls, ecology-cycle skip controls, life/reproduction tuning, selected-individual lifecycle details, a compact ancestry chain, historical-genome preview controls, and history archive save/load controls. It never mutates a genome directly.
 
 ## 3. Prototype genome model
 
 The body gene list is an ordered tree. Entry `0` is the root. Every later entry has a `parentIndex` smaller than its own index, which makes building and repairing the topology deterministic. Removing the last part preserves this invariant; adding a part chooses an existing parent.
 
-The brain uses ten observations in this phase: root velocity, angular state, tilt/height, aggregate joint state, a phase oscillator, and a constant bias. Eight hidden units feed eight possible actuator outputs. Actual joints use the first outputs in joint order. This mapping is intentionally documented as a replaceable prototype limitation rather than a species/behavior rule.
+The brain uses fourteen observations in this phase: the original ten locomotion observations (root velocity, angular state, tilt/height, aggregate joint state, a phase oscillator, and a constant bias) plus energy ratio, nearest-resource direction x/z, and resource proximity. Eight hidden units feed eight possible actuator outputs. Actual joints use the first outputs in joint order. This mapping is intentionally documented as a replaceable prototype limitation rather than a species/behavior rule. `CreatureGenome` schema version 2 repairs old ten-input genomes into the expanded array shape.
 
 ## 4. Physics model
 
@@ -96,26 +100,33 @@ The brain uses ten observations in this phase: root velocity, angular state, til
 3. Fitness is the greatest forward displacement from the lane's start position.
 4. The engine records best/average fitness and lineage metadata.
 5. A small elite set is copied; remaining children mix compatible genes from two high-ranked parents and mutate both body and brain values.
-6. The next generation is rebuilt from data, so no physical object survives as hidden genetic state.
+6. In the fixed locomotion path, the next generation is rebuilt from data, so no physical object survives as hidden genetic state.
 
-Natural population dynamics are not implemented here. The engine's `BreedNextGeneration` boundary is where later survival, energy, reproduction, and death rules will replace fixed-count ranking.
+Prototype 2 adds a separate natural cycle:
+
+1. `EnvironmentController.Tick` respawns available resources.
+2. Each live `Creature` consumes nearby resource energy, pays metabolism and movement cost, and ages.
+3. Death removes the embodiment and its genome from the live engine population while recording the lifecycle snapshot.
+4. Reproduction spends parent energy, creates a crossed/mutated child genome, and spawns a child until carrying capacity is reached.
+5. `RecordEcologyCycle` records the live population and advances the observation cycle without forcing a fixed survivor count.
 
 ## 6. Presentation and input
 
 The runtime bootstrap attaches `EvolutionSimulation` to a generated root object after `SampleScene` loads. It configures the existing camera/light and creates the ground, avoiding a large serialized scene diff during the blank-template phase. The camera is perspective-based and receives a separate `FreeCameraController`: WASD moves, Q/E move vertically, right-mouse drag looks, and the mouse wheel dollies. Camera input is unscaled; pointer-based camera input is disabled over the IMGUI panels so observation remains possible while paused.
 
-The UI uses Unity IMGUI so the prototype does not need a second input-action asset or serialized Canvas prefab. World selection uses the existing Input System mouse position and a physics raycast. The controls panel can be scrolled and exposes generation duration plus the main joint drive tuning values at runtime. Selecting an individual exposes a Follow/Unfollow camera command; following stores a camera offset relative to the selected root body and remains independent of simulation time scale. The history graph and ancestry display consume `SimulationHistory` snapshots rather than live scene references. A selected ancestry record can be rebuilt as a non-physical observation preview, while the live population remains responsible for evaluation. JSON archive load is intentionally history-only; it does not resume the current physics world or random sequence. This is a presentation choice only; a future UGUI/UI Toolkit front end can consume the same simulation snapshots.
+The UI uses Unity IMGUI so the prototype does not need a second input-action asset or serialized Canvas prefab. World selection uses the existing Input System mouse position and a physics raycast. The controls panel can be scrolled and exposes cycle interval, life/reproduction, and joint drive tuning values at runtime. Selecting an individual exposes energy, age, offspring/status, and a Follow/Unfollow camera command; following stores a camera offset relative to the selected root body and remains independent of simulation time scale. The history graph and ancestry display consume `SimulationHistory` snapshots rather than live scene references. A selected ancestry record can be rebuilt as a non-physical observation preview, while the live population remains responsible for evaluation. JSON archive load is intentionally history-only; it does not resume the current physics world, resource timers, or random sequence. This is a presentation choice only; a future UGUI/UI Toolkit front end can consume the same simulation snapshots.
 
 ## 7. Known prototype constraints and replacement seams
 
 | Prototype constraint | Why it exists now | Future replacement seam |
 | --- | --- | --- |
-| Fixed population | Makes generation comparison easy | `EvolutionEngine` population/reproduction policy |
+| Fixed-count generation path | Keeps the locomotion baseline reproducible | Natural `CreateOffspring`/`RecordEcologyCycle` path |
 | Displacement fitness | Isolates locomotion | Fitness/effects system driven by environment and energy |
 | Flat ground | Keeps physics debugging bounded | `EnvironmentController` and environment entities |
-| Fixed brain output ceiling | Avoids dynamic tensor allocation in first pass | Variable brain graph/actuator mapping in `BrainGene` |
+| Fixed brain input/output shape | Avoids dynamic tensor allocation in first pass | Variable brain graph/actuator mapping in `BrainGene` |
 | Configurable joints and GameObjects | More drive/axis flexibility while remaining inspectable | Multi-axis joint genes or alternate `CreatureBuilder` backend |
 | IMGUI | No prefab/scene/UI asset setup | Separate view model plus UGUI/UI Toolkit |
 | Lane collision isolation | Prevents population interference | Remove when interaction/predation becomes a selection pressure |
+| Simplified resource and reproduction rules | Makes natural population change observable before predation | General effects, mating, predation, and species/lineage analysis |
 
 Any code using one of these constraints should include a nearby TODO or comment when the assumption is not obvious.
