@@ -345,7 +345,7 @@ namespace EvolutionLab
     [Serializable]
     public sealed class LifetimeLearningGene
     {
-        public const int CurrentSchemaVersion = 1;
+        public const int CurrentSchemaVersion = 2;
 
         public int schemaVersion = CurrentSchemaVersion;
         public bool enabled = true;
@@ -357,6 +357,8 @@ namespace EvolutionLab
         public float damageScale = 5f;
         public float controlCostScale = 0.35f;
         public float survivalBias = 0.012f;
+        public float rewardBaselineRate = 0.035f;
+        public float plasticityDecay = 0.0006f;
 
         public static LifetimeLearningGene CreateRandom(System.Random random)
         {
@@ -369,7 +371,9 @@ namespace EvolutionLab
                 energyDeltaScale = GenomeRandom.Range(random, 2.5f, 7.5f),
                 damageScale = GenomeRandom.Range(random, 2.5f, 7.5f),
                 controlCostScale = GenomeRandom.Range(random, 0.1f, 0.7f),
-                survivalBias = GenomeRandom.Range(random, 0.002f, 0.025f)
+                survivalBias = GenomeRandom.Range(random, 0.002f, 0.025f),
+                rewardBaselineRate = GenomeRandom.Range(random, 0.012f, 0.08f),
+                plasticityDecay = GenomeRandom.Range(random, 0.00005f, 0.0025f)
             };
             gene.Repair();
             return gene;
@@ -389,7 +393,9 @@ namespace EvolutionLab
                 energyDeltaScale = energyDeltaScale,
                 damageScale = damageScale,
                 controlCostScale = controlCostScale,
-                survivalBias = survivalBias
+                survivalBias = survivalBias,
+                rewardBaselineRate = rewardBaselineRate,
+                plasticityDecay = plasticityDecay
             };
         }
 
@@ -416,6 +422,8 @@ namespace EvolutionLab
             result.damageScale = Mathf.Lerp(a.damageScale, b.damageScale, 0.5f);
             result.controlCostScale = Mathf.Lerp(a.controlCostScale, b.controlCostScale, 0.5f);
             result.survivalBias = Mathf.Lerp(a.survivalBias, b.survivalBias, 0.5f);
+            result.rewardBaselineRate = Mathf.Lerp(a.rewardBaselineRate, b.rewardBaselineRate, 0.5f);
+            result.plasticityDecay = Mathf.Lerp(a.plasticityDecay, b.plasticityDecay, 0.5f);
             result.Repair();
             return result;
         }
@@ -431,6 +439,8 @@ namespace EvolutionLab
             damageScale = MutateFloat(random, damageScale, mutationRate, 0.8f, 0.25f, 12f);
             controlCostScale = MutateFloat(random, controlCostScale, mutationRate, 0.1f, 0f, 2f);
             survivalBias = MutateFloat(random, survivalBias, mutationRate, 0.004f, 0f, 0.08f);
+            rewardBaselineRate = MutateFloat(random, rewardBaselineRate, mutationRate, 0.012f, 0.001f, 0.25f);
+            plasticityDecay = MutateFloat(random, plasticityDecay, mutationRate, 0.0004f, 0f, 0.01f);
             if (GenomeRandom.Chance(random, mutationRate * 0.08f))
             {
                 enabled = !enabled;
@@ -456,6 +466,14 @@ namespace EvolutionLab
                 damageScale = 5f;
                 controlCostScale = 0.35f;
                 survivalBias = 0.012f;
+                rewardBaselineRate = 0.035f;
+                plasticityDecay = 0.0006f;
+            }
+
+            if (schemaVersion < 2)
+            {
+                rewardBaselineRate = 0.035f;
+                plasticityDecay = 0.0006f;
             }
 
             schemaVersion = CurrentSchemaVersion;
@@ -467,6 +485,8 @@ namespace EvolutionLab
             damageScale = Mathf.Clamp(Safe(damageScale, 5f), 0.25f, 12f);
             controlCostScale = Mathf.Clamp(Safe(controlCostScale, 0.35f), 0f, 2f);
             survivalBias = Mathf.Clamp(Safe(survivalBias, 0.012f), 0f, 0.08f);
+            rewardBaselineRate = Mathf.Clamp(Safe(rewardBaselineRate, 0.035f), 0.001f, 0.25f);
+            plasticityDecay = Mathf.Clamp(Safe(plasticityDecay, 0.0006f), 0f, 0.01f);
         }
 
         private static float MutateFloat(
@@ -741,10 +761,11 @@ namespace EvolutionLab
     [Serializable]
     public sealed class CreatureGenome
     {
-        // Schema 5 introduces inherited sensor and interaction-organ topology
-        // plus multi-axis joint geometry. Runtime fast weights are deliberately
-        // not part of this serialized schema.
-        public const int CurrentSchemaVersion = 5;
+        // Schema 5 introduced inherited sensor/organ topology and multi-axis
+        // joints. Schema 6 adds an evolvable active hidden-neuron count while
+        // retaining fixed-capacity arrays. Runtime fast weights remain outside
+        // the inherited schema.
+        public const int CurrentSchemaVersion = 6;
         public const int MinBodyParts = 2;
         public const int MaxBodyParts = 12;
         public const int MaxSensors = 3;

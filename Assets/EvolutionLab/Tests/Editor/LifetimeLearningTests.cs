@@ -63,6 +63,26 @@ namespace EvolutionLab.Tests
         }
 
         [Test]
+        public void RepeatedSignal_BuildsAHomeostaticBaselineThatIsSnapshotSafe()
+        {
+            BrainGene gene = CreateLearningGene();
+            Brain brain = new Brain(gene);
+            brain.Evaluate(CreateInputs(0.3f));
+            for (int i = 0; i < 100; i++) brain.ApplyHomeostaticLearning(0.8f, 0.02f);
+
+            var snapshot = new BrainRuntimeSnapshot();
+            brain.CaptureRuntimeState(snapshot);
+
+            Assert.That(snapshot.rewardBaseline, Is.GreaterThan(0.5f));
+            Assert.That(snapshot.rewardBaseline, Is.LessThanOrEqualTo(0.8f));
+            Brain restored = new Brain(gene);
+            restored.RestoreRuntimeState(snapshot);
+            var restoredSnapshot = new BrainRuntimeSnapshot();
+            restored.CaptureRuntimeState(restoredSnapshot);
+            Assert.That(restoredSnapshot.rewardBaseline, Is.EqualTo(snapshot.rewardBaseline).Within(0.000001f));
+        }
+
+        [Test]
         public void Learning_DoesNotModifyInheritedBaseWeightArrays()
         {
             BrainGene gene = CreateLearningGene();
@@ -138,12 +158,35 @@ namespace EvolutionLab.Tests
                 energyDeltaScale = float.NaN,
                 damageScale = float.NaN,
                 controlCostScale = float.NaN,
-                survivalBias = float.NaN
+                survivalBias = float.NaN,
+                rewardBaselineRate = float.NaN,
+                plasticityDecay = float.NaN
             };
             oldSchema.Repair();
             Assert.That(oldSchema.schemaVersion, Is.EqualTo(LifetimeLearningGene.CurrentSchemaVersion));
             Assert.That(oldSchema.enabled, Is.True);
             AssertLearningGeneValid(oldSchema);
+
+            var schemaOne = new LifetimeLearningGene
+            {
+                schemaVersion = 1,
+                enabled = false,
+                learningRate = 0.02f,
+                eligibilityDecay = 0.85f,
+                memoryRetention = 0.7f,
+                fastWeightLimit = 0.6f,
+                energyDeltaScale = 4f,
+                damageScale = 4f,
+                controlCostScale = 0.25f,
+                survivalBias = 0.01f,
+                rewardBaselineRate = 0f,
+                plasticityDecay = 0f
+            };
+            schemaOne.Repair();
+            Assert.That(schemaOne.schemaVersion, Is.EqualTo(2));
+            Assert.That(schemaOne.enabled, Is.False);
+            Assert.That(schemaOne.rewardBaselineRate, Is.EqualTo(0.035f));
+            Assert.That(schemaOne.plasticityDecay, Is.EqualTo(0.0006f));
         }
 
         private static BrainGene CreateLearningGene()
@@ -199,6 +242,8 @@ namespace EvolutionLab.Tests
             Assert.That(gene.damageScale, Is.InRange(0.25f, 12f));
             Assert.That(gene.controlCostScale, Is.InRange(0f, 2f));
             Assert.That(gene.survivalBias, Is.InRange(0f, 0.08f));
+            Assert.That(gene.rewardBaselineRate, Is.InRange(0.001f, 0.25f));
+            Assert.That(gene.plasticityDecay, Is.InRange(0f, 0.01f));
         }
 
         private static bool IsFinite(float value)

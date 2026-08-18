@@ -10,7 +10,12 @@ namespace EvolutionLab
     /// </summary>
     public static class GenomeDistance
     {
-        private const int MorphologyPartFeatureCount = 13;
+        // Per-part features include the legacy body plan plus the full
+        // ConfigurableJoint frame and angular limits introduced by schema 5.
+        private const int MorphologyPartFeatureCount = 20;
+        private const int SensorFeatureCount = 10; // all SensorGene fields
+        private const int MouthFeatureCount = 9;   // all MouthGene fields
+        private const int LearningFeatureCount = 11; // enabled + ten inherited plasticity parameters
         private const float MaxLength = 1.8f;
         private const float MaxThickness = 0.65f;
         private const float MaxMass = 2.8f;
@@ -20,9 +25,19 @@ namespace EvolutionLab
         private const float BrainValueScale = 3f;
 
         public const int MorphologyFeatureCount =
-            1 + CreatureGenome.MaxBodyParts * MorphologyPartFeatureCount;
+            1 + CreatureGenome.MaxBodyParts * MorphologyPartFeatureCount
+            + 1 + CreatureGenome.MaxSensors * SensorFeatureCount
+            + MouthFeatureCount;
 
         public const int BrainFeatureCount =
+            BrainGene.InputCount * BrainGene.HiddenCount
+            + BrainGene.HiddenCount
+            + BrainGene.HiddenCount * BrainGene.MaxOutputCount
+            + BrainGene.MaxOutputCount
+            + 1 // activeHiddenCount
+            + LearningFeatureCount;
+
+        private const int BrainCoreFeatureCount =
             BrainGene.InputCount * BrainGene.HiddenCount
             + BrainGene.HiddenCount
             + BrainGene.HiddenCount * BrainGene.MaxOutputCount
@@ -94,11 +109,46 @@ namespace EvolutionLab
                     morphology[offset + 9] = NormalizeUnit(part.mass, MaxMass);
                     morphology[offset + 10] = NormalizeUnit(part.jointLimit, MaxJointLimit);
                     morphology[offset + 11] = NormalizeUnit(part.driveStrength, MaxDriveStrength);
-                    // Keep one reserved, deterministic slot per part. It makes
-                    // adding a future morphology scalar a descriptor-only change.
-                    morphology[offset + 12] = 0f;
+                    morphology[offset + 12] = NormalizeSigned(part.jointAxis.x, 1f);
+                    morphology[offset + 13] = NormalizeSigned(part.jointAxis.y, 1f);
+                    morphology[offset + 14] = NormalizeSigned(part.jointAxis.z, 1f);
+                    morphology[offset + 15] = NormalizeSigned(part.secondaryAxis.x, 1f);
+                    morphology[offset + 16] = NormalizeSigned(part.secondaryAxis.y, 1f);
+                    morphology[offset + 17] = NormalizeSigned(part.secondaryAxis.z, 1f);
+                    morphology[offset + 18] = NormalizeUnit(part.angularYLimit, MaxJointLimit);
+                    morphology[offset + 19] = NormalizeUnit(part.angularZLimit, MaxJointLimit);
                 }
             }
+
+            int sensorOffset = 1 + CreatureGenome.MaxBodyParts * MorphologyPartFeatureCount;
+            int sensorCount = genome.sensors == null ? 0 : Math.Min(genome.sensors.Count, CreatureGenome.MaxSensors);
+            morphology[sensorOffset] = NormalizeUnit(sensorCount, CreatureGenome.MaxSensors);
+            for (int i = 0; i < sensorCount; i++)
+            {
+                SensorGene sensor = genome.sensors[i];
+                int offset = sensorOffset + 1 + i * SensorFeatureCount;
+                morphology[offset] = NormalizeUnit(sensor.bodyPartIndex, Math.Max(1, CreatureGenome.MaxBodyParts - 1));
+                morphology[offset + 1] = NormalizeSigned(sensor.localPosition.x, 2f);
+                morphology[offset + 2] = NormalizeSigned(sensor.localPosition.y, 1f);
+                morphology[offset + 3] = NormalizeSigned(sensor.localPosition.z, 1f);
+                morphology[offset + 4] = NormalizeSigned(sensor.localDirection.x, 1f);
+                morphology[offset + 5] = NormalizeSigned(sensor.localDirection.y, 1f);
+                morphology[offset + 6] = NormalizeSigned(sensor.localDirection.z, 1f);
+                morphology[offset + 7] = NormalizeRange(sensor.rangeMultiplier, 0.25f, 2f);
+                morphology[offset + 8] = NormalizeRange(sensor.fieldOfView, 10f, 360f);
+                morphology[offset + 9] = NormalizeRange(sensor.sensitivity, 0.05f, 3f);
+            }
+
+            int mouthOffset = sensorOffset + 1 + CreatureGenome.MaxSensors * SensorFeatureCount;
+            morphology[mouthOffset] = NormalizeUnit(genome.mouth.bodyPartIndex, Math.Max(1, CreatureGenome.MaxBodyParts - 1));
+            morphology[mouthOffset + 1] = NormalizeSigned(genome.mouth.localPosition.x, 2f);
+            morphology[mouthOffset + 2] = NormalizeSigned(genome.mouth.localPosition.y, 1f);
+            morphology[mouthOffset + 3] = NormalizeSigned(genome.mouth.localPosition.z, 1f);
+            morphology[mouthOffset + 4] = NormalizeSigned(genome.mouth.localDirection.x, 1f);
+            morphology[mouthOffset + 5] = NormalizeSigned(genome.mouth.localDirection.y, 1f);
+            morphology[mouthOffset + 6] = NormalizeSigned(genome.mouth.localDirection.z, 1f);
+            morphology[mouthOffset + 7] = NormalizeRange(genome.mouth.reach, 0.25f, 4f);
+            morphology[mouthOffset + 8] = NormalizeRange(genome.mouth.efficiency, 0.05f, 2f);
 
             bool hasBrain = genome.brain != null
                 && (genome.brain.inputHiddenWeights != null
@@ -136,6 +186,27 @@ namespace EvolutionLab
                     cursor,
                     BrainGene.MaxOutputCount,
                     BrainValueScale);
+                int metadata = BrainCoreFeatureCount;
+                int activeHiddenCount = genome.brain.activeHiddenCount <= 0
+                    ? BrainGene.HiddenCount
+                    : genome.brain.activeHiddenCount;
+                brain[metadata++] = NormalizeRange(activeHiddenCount, 2f, BrainGene.HiddenCount);
+                LifetimeLearningGene learning = genome.brain.learning;
+                if (learning == null)
+                {
+                    learning = new LifetimeLearningGene();
+                }
+                brain[metadata++] = learning.enabled ? 1f : 0f;
+                brain[metadata++] = NormalizeRange(learning.learningRate, 0.001f, 0.08f);
+                brain[metadata++] = NormalizeRange(learning.eligibilityDecay, 0.55f, 0.995f);
+                brain[metadata++] = NormalizeRange(learning.memoryRetention, 0.25f, 0.995f);
+                brain[metadata++] = NormalizeRange(learning.fastWeightLimit, 0.1f, 1.5f);
+                brain[metadata++] = NormalizeRange(learning.energyDeltaScale, 0.25f, 12f);
+                brain[metadata++] = NormalizeRange(learning.damageScale, 0.25f, 12f);
+                brain[metadata++] = NormalizeRange(learning.controlCostScale, 0f, 2f);
+                brain[metadata++] = NormalizeRange(learning.survivalBias, 0f, 0.08f);
+                brain[metadata++] = NormalizeRange(learning.rewardBaselineRate, 0.001f, 0.25f);
+                brain[metadata] = NormalizeRange(learning.plasticityDecay, 0f, 0.01f);
             }
 
             bool hasEcology = genome.ecology != null;
@@ -198,7 +269,11 @@ namespace EvolutionLab
                 Bucket(descriptor.morphology, 0, true),
                 Bucket(descriptor.morphology, 1, false),
                 descriptor.HasBrain ? 1 : 0,
-                Bucket(descriptor.brain, 0, false),
+                // Keep the candidate key stable when only activeHiddenCount or
+                // inherited learning rules change. Those are compared by the
+                // full descriptor, but must not make the coarse candidate set
+                // churn between adjacent schema-6 genomes.
+                Bucket(descriptor.brain, 0, BrainCoreFeatureCount),
                 descriptor.HasEcology ? 1 : 0,
                 Bucket(descriptor.ecology, 0, false));
         }
@@ -259,8 +334,46 @@ namespace EvolutionLab
                     hash = AddFloat(hash, part.mass);
                     hash = AddFloat(hash, part.jointLimit);
                     hash = AddFloat(hash, part.driveStrength);
+                    hash = AddFloat(hash, NormalizeSigned(part.jointAxis.x, 1f));
+                    hash = AddFloat(hash, NormalizeSigned(part.jointAxis.y, 1f));
+                    hash = AddFloat(hash, NormalizeSigned(part.jointAxis.z, 1f));
+                    hash = AddFloat(hash, NormalizeSigned(part.secondaryAxis.x, 1f));
+                    hash = AddFloat(hash, NormalizeSigned(part.secondaryAxis.y, 1f));
+                    hash = AddFloat(hash, NormalizeSigned(part.secondaryAxis.z, 1f));
+                    hash = AddFloat(hash, NormalizeUnit(part.angularYLimit, MaxJointLimit));
+                    hash = AddFloat(hash, NormalizeUnit(part.angularZLimit, MaxJointLimit));
                 }
             }
+
+            hash = AddInt(hash, genome.sensors == null ? -1 : genome.sensors.Count);
+            if (genome.sensors != null)
+            {
+                int sensorCount = Math.Min(genome.sensors.Count, CreatureGenome.MaxSensors);
+                for (int i = 0; i < sensorCount; i++)
+                {
+                    SensorGene sensor = genome.sensors[i];
+                    hash = AddFloat(hash, NormalizeUnit(sensor.bodyPartIndex, Math.Max(1, CreatureGenome.MaxBodyParts - 1)));
+                    hash = AddFloat(hash, NormalizeSigned(sensor.localPosition.x, 2f));
+                    hash = AddFloat(hash, NormalizeSigned(sensor.localPosition.y, 1f));
+                    hash = AddFloat(hash, NormalizeSigned(sensor.localPosition.z, 1f));
+                    hash = AddFloat(hash, NormalizeSigned(sensor.localDirection.x, 1f));
+                    hash = AddFloat(hash, NormalizeSigned(sensor.localDirection.y, 1f));
+                    hash = AddFloat(hash, NormalizeSigned(sensor.localDirection.z, 1f));
+                    hash = AddFloat(hash, NormalizeRange(sensor.rangeMultiplier, 0.25f, 2f));
+                    hash = AddFloat(hash, NormalizeRange(sensor.fieldOfView, 10f, 360f));
+                    hash = AddFloat(hash, NormalizeRange(sensor.sensitivity, 0.05f, 3f));
+                }
+            }
+
+            hash = AddFloat(hash, NormalizeUnit(genome.mouth.bodyPartIndex, Math.Max(1, CreatureGenome.MaxBodyParts - 1)));
+            hash = AddFloat(hash, NormalizeSigned(genome.mouth.localPosition.x, 2f));
+            hash = AddFloat(hash, NormalizeSigned(genome.mouth.localPosition.y, 1f));
+            hash = AddFloat(hash, NormalizeSigned(genome.mouth.localPosition.z, 1f));
+            hash = AddFloat(hash, NormalizeSigned(genome.mouth.localDirection.x, 1f));
+            hash = AddFloat(hash, NormalizeSigned(genome.mouth.localDirection.y, 1f));
+            hash = AddFloat(hash, NormalizeSigned(genome.mouth.localDirection.z, 1f));
+            hash = AddFloat(hash, NormalizeRange(genome.mouth.reach, 0.25f, 4f));
+            hash = AddFloat(hash, NormalizeRange(genome.mouth.efficiency, 0.05f, 2f));
 
             if (genome.brain == null)
             {
@@ -272,6 +385,26 @@ namespace EvolutionLab
                 hash = AddRawArray(hash, genome.brain.hiddenBiases);
                 hash = AddRawArray(hash, genome.brain.hiddenOutputWeights);
                 hash = AddRawArray(hash, genome.brain.outputBiases);
+                hash = AddInt(hash, genome.brain.activeHiddenCount);
+                LifetimeLearningGene learning = genome.brain.learning;
+                if (learning == null)
+                {
+                    hash = AddInt(hash, -1);
+                }
+                else
+                {
+                    hash = AddInt(hash, learning.enabled ? 1 : 0);
+                    hash = AddFloat(hash, NormalizeRange(learning.learningRate, 0.001f, 0.08f));
+                    hash = AddFloat(hash, NormalizeRange(learning.eligibilityDecay, 0.55f, 0.995f));
+                    hash = AddFloat(hash, NormalizeRange(learning.memoryRetention, 0.25f, 0.995f));
+                    hash = AddFloat(hash, NormalizeRange(learning.fastWeightLimit, 0.1f, 1.5f));
+                    hash = AddFloat(hash, NormalizeRange(learning.energyDeltaScale, 0.25f, 12f));
+                    hash = AddFloat(hash, NormalizeRange(learning.damageScale, 0.25f, 12f));
+                    hash = AddFloat(hash, NormalizeRange(learning.controlCostScale, 0f, 2f));
+                    hash = AddFloat(hash, NormalizeRange(learning.survivalBias, 0f, 0.08f));
+                    hash = AddFloat(hash, NormalizeRange(learning.rewardBaselineRate, 0.001f, 0.25f));
+                    hash = AddFloat(hash, NormalizeRange(learning.plasticityDecay, 0f, 0.01f));
+                }
             }
 
             if (genome.ecology == null)
@@ -325,6 +458,11 @@ namespace EvolutionLab
 
         private static int Bucket(float[] values, int firstIndex, bool singleValue)
         {
+            return Bucket(values, firstIndex, singleValue ? 1 : -1);
+        }
+
+        private static int Bucket(float[] values, int firstIndex, int featureCount)
+        {
             if (values == null || values.Length == 0)
             {
                 return 0;
@@ -332,7 +470,7 @@ namespace EvolutionLab
 
             float sum = 0f;
             int count = 0;
-            if (singleValue && firstIndex >= 0 && firstIndex < values.Length)
+            if (featureCount == 1 && firstIndex >= 0 && firstIndex < values.Length)
             {
                 // The first morphology feature is body-part count. Keep it
                 // separate from the remaining shape values.
@@ -342,7 +480,8 @@ namespace EvolutionLab
             else
             {
                 int start = firstIndex < 0 ? 0 : firstIndex;
-                for (int i = start; i < values.Length; i++)
+                int end = featureCount < 0 ? values.Length : Math.Min(values.Length, start + featureCount);
+                for (int i = start; i < end; i++)
                 {
                     sum += Safe(values[i]);
                     count++;

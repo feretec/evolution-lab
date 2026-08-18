@@ -36,6 +36,7 @@ namespace EvolutionLab
         private bool hasActivation;
         private float pendingHomeostaticSignal;
         private float lastHomeostaticSignal;
+        private float rewardBaseline;
         private float adaptationMagnitude;
 
         public Brain(BrainGene source)
@@ -111,6 +112,7 @@ namespace EvolutionLab
             snapshot.hasActivation = hasActivation;
             snapshot.pendingHomeostaticSignal = SafeClamp(pendingHomeostaticSignal, -1f, 1f);
             snapshot.lastHomeostaticSignal = SafeClamp(lastHomeostaticSignal, -1f, 1f);
+            snapshot.rewardBaseline = SafeClamp(rewardBaseline, -1f, 1f);
             snapshot.adaptationMagnitude = SafeClamp(adaptationMagnitude, 0f, 1.5f);
         }
 
@@ -137,6 +139,7 @@ namespace EvolutionLab
             hasActivation = snapshot.hasActivation;
             pendingHomeostaticSignal = SafeClamp(snapshot.pendingHomeostaticSignal, -1f, 1f);
             lastHomeostaticSignal = SafeClamp(snapshot.lastHomeostaticSignal, -1f, 1f);
+            rewardBaseline = SafeClamp(snapshot.rewardBaseline, -1f, 1f);
             adaptationMagnitude = SafeClamp(snapshot.adaptationMagnitude, 0f, 1.5f);
         }
 
@@ -297,7 +300,14 @@ namespace EvolutionLab
                 2f);
             float rate = Mathf.Clamp(learningGene.learningRate, 0.001f, 0.08f);
             float limit = Mathf.Clamp(learningGene.fastWeightLimit, 0.1f, 1.5f);
-            float modulator = SafeClamp(signal, -1f, 1f);
+            float modulator = SafeClamp(signal - rewardBaseline, -1f, 1f);
+            float baselineRate = Mathf.Clamp(learningGene.rewardBaselineRate, 0.001f, 0.25f);
+            rewardBaseline = SafeClamp(
+                Mathf.Lerp(rewardBaseline, signal, baselineRate * stepScale),
+                -1f,
+                1f);
+            float retention = Mathf.Clamp01(
+                1f - Mathf.Clamp(learningGene.plasticityDecay, 0f, 0.01f) * stepScale);
 
             int activeHiddenCount = ActiveHiddenCount;
             for (int h = 0; h < activeHiddenCount; h++)
@@ -313,7 +323,7 @@ namespace EvolutionLab
                     float delta = SafeClamp(rate * stepScale * modulator * eligibility, -0.08f, 0.08f);
                     int index = inputOffset + i;
                     fastInputHiddenWeights[index] = SafeClamp(
-                        fastInputHiddenWeights[index] + delta,
+                        fastInputHiddenWeights[index] * retention + delta,
                         -limit,
                         limit);
                 }
@@ -327,7 +337,7 @@ namespace EvolutionLab
                         TraceLimit);
                     float delta = SafeClamp(rate * stepScale * modulator * eligibility, -0.08f, 0.08f);
                     fastHiddenOutputWeights[index] = SafeClamp(
-                        fastHiddenOutputWeights[index] + delta,
+                        fastHiddenOutputWeights[index] * retention + delta,
                         -limit,
                         limit);
                 }
@@ -353,6 +363,7 @@ namespace EvolutionLab
             hasActivation = false;
             pendingHomeostaticSignal = 0f;
             lastHomeostaticSignal = 0f;
+            rewardBaseline = 0f;
             adaptationMagnitude = 0f;
         }
 

@@ -64,7 +64,7 @@ Verify that a variable physical body and its neural controller can evolve togeth
 
 - A genome-defined tree of multiple physical body parts.
 - Rigidbodies and colliders for each part.
-- Configurable joints with genome-defined angular limits and drive strength. Prototype 1 locks the three linear axes and two secondary angular axes so body parts remain physically attached while the primary angular axis is actuated.
+- Configurable joints with genome-defined orthogonal axes, three angular limits, and drive strength. Linear axes remain locked so body parts stay physically attached while angular freedom can evolve.
 - A small feed-forward neural controller whose weights are stored in the genome.
 - A runtime `Creature` that can be destroyed and rebuilt from the genome.
 
@@ -129,13 +129,13 @@ Verify that a population can change through energy acquisition, metabolism, surv
 - Statistics include cycle, population/carrying capacity, survival fitness, births/deaths, average energy, resource availability, and ecology status.
 - Selected individuals expose energy, age, offspring count, and alive/death status in addition to morphology and lineage.
 - Ecology-cycle history records average energy/age and birth/death counts. Individual history records retain lifecycle snapshots for ancestry and extinct-lineage observation.
-- Brain schema version 2 uses the original locomotion observations plus energy/resource observations. Older serialized genomes are repaired into the expanded input shape without changing their lineage identity.
+- The current brain contract uses 22 observations and 12 outputs (8 motor and 4 behavior-intent channels). Older serialized genomes are repaired into the expanded fixed-capacity shape without changing lineage identity.
 
 ### Explicit limits
 
-- Predation, complex terrain, movable objects, emergent species classification, and multi-world simulation are later phases.
+- Multi-world execution and a data-oriented simulation backend remain later phases; predation-like interaction, neutral terrain features, movable objects, water, and post-hoc species analysis are now present in the integrated runtime.
 - Lane collision isolation remains temporarily enabled so Prototype 2 measures resource-driven survival without adding inter-individual physics as a confounding variable. It must be removed or replaced when interaction/predation becomes a selection pressure.
-- History archive load remains observation-only; it does not resume a live physics world, resource timers, or the random stream.
+- History archive load remains observation-only. A separate live-world snapshot restores physics/life state, resources, acquired brain state, and deterministic random streams.
 
 ### Prototype 2 acceptance criteria
 
@@ -201,24 +201,34 @@ Prototype 1 is implemented under `Assets/EvolutionLab/Scripts` with runtime boot
 - Physical rigidbodies, colliders, configurable joints, neural actuation, forward-displacement fitness, selection, crossover, mutation, lineage IDs, and generation history are implemented.
 - Runtime IMGUI exposes generation/population/best/average fitness, pause, x1/x10/x100 speed controls, generation skips, individual inspection, generation-duration controls, and joint-drive tuning.
 - Prototype 1.5 adds a bounded per-individual genome history, a best/average fitness graph, primary-parent ancestry display, a Follow/Unfollow camera command for the selected individual, historical-genome preview reconstruction, and JSON save/load for the bounded observation archive.
-- Historical previews are rebuilt from cloned `CreatureGenome` data as kinematic, non-colliding displays. Loading an archive restores the recorded history for observation; it does not resume live physics, current population state, or the engine random stream.
+- Historical previews are rebuilt from cloned `CreatureGenome` data as kinematic, non-colliding displays. History archive loading is observation-only; live-world snapshots are the resumable format.
 - Prototype 2 adds deterministic energy resources, runtime metabolism and movement cost, age/starvation death, mature reproduction with crossover/mutation, carrying capacity, natural population fluctuation, ecology-cycle reports, lifecycle-aware individual history, and four ecological brain observations.
 - Prototype 2 keeps runtime life state on `Creature`, not on `CreatureGenome`; genome data remains serializable and rebuildable. `EnergyResource` is an environment entity rather than a semantic “food” instruction.
 - A perspective free camera is available for observation: WASD movement, Q/E vertical movement, right-mouse look, mouse-wheel dolly, reset-view, and selected-individual follow. Camera input is independent of the simulation time scale.
 - Default evaluation duration is 20 seconds. Joint drive force, target angular speed, damping, and settling duration are serialized simulation parameters and the main values can also be adjusted while running.
 - Unity `6000.5.8f1` Play Mode was exercised through multiple ecology cycles, x10 fast-forward, pause/resume, live individual selection, and lifecycle observation; the Unity Console showed no errors caused by the prototype.
-- Flat ground, lane isolation, fixed brain output ceiling, and simplified resource/reproduction rules are still explicit prototype constraints; they are not the final ecology design.
+- Fixed neural channel/body capacity, GameObject/PhysX execution, bounded history, and simplified resource/reproduction rules remain explicit implementation constraints; they are not ecological role definitions.
 
 ## 11. Final runtime implementation status
 
 The runtime now crosses the Prototype 2 boundary into an integrated artificial-life observation world while preserving the genome/body/brain/history seams.
 
-- `CreatureGenome` schema 3 adds mutable continuous ecological genes: foraging drive, interaction drive, defense, sociality, sensor range, body protection, energy efficiency, and reproduction drive. They are traits, not fixed predator/prey or species classes.
-- `BrainGene` now receives twenty-two observations and exposes twelve inherited controller outputs. The original locomotion inputs remain stable at the front of the vector; generic nearby-body, threat, obstacle, and ecological observations are appended for forward-compatible archive repair.
+- `CreatureGenome` schema 6 contains mutable body topology, three-axis joint geometry, positioned sensors and mouth, continuous ecological traits, active neural topology, and inherited lifetime-plasticity parameters. They are traits, not fixed predator/prey or species classes.
+- `BrainGene` receives twenty-two observations, evolves 2–8 active hidden neurons, and exposes twelve controller outputs (8 motor, 4 behavior intent). The original locomotion inputs remain stable at the front of the vector; generic nearby-body, threat, obstacle, organ, and ecological observations are appended for forward-compatible repair.
+- Each individual performs online reward-modulated learning during its lifetime using eligibility traces, short-term memory, a moving homeostatic reward baseline, and decaying fast weights. The plasticity rule is inherited and evolves with body and base brain; acquired fast weights are not inherited.
+- ML-Agents is not a runtime dependency. The current mechanism is custom online plasticity because learning must occur independently inside dynamically generated organisms; ML-Agents may later serve as an offline benchmark or experimental trainer.
 - `EcologyInteractionSystem` resolves spatial encounters from inherited traits and neural outputs. Energy transfer, pursuit, avoidance, social proximity, damage, kills, and predation are emergent outcomes of continuous values. No organism is assigned a carnivore/herbivore class.
-- `EnvironmentFeature` adds deterministic neutral physical geometry to the world. Features expose colliders and shape only; no hiding, defense, or food semantics are sent to controllers.
-- `SimulationHistory` stores consequential natural-history events, combat statistics, descendant queries, and a `NaturalHistoryCatalog` that derives lineage summaries, extinct branches, and post-hoc morphology/brain/ecology morphotypes.
-- The observation UI now includes encounters, kills, physical features, lineages, extinct branches, morphotypes, recent natural-history events, continuous ecological traits, neural interaction intent, descendants, and save/load controls for both history archives and live-world snapshots.
-- Live-world snapshots restore current genomes, generation, camera-observable poses, energy, age, offspring, combat counters, and the observation archive. Environment timers and the random stream are intentionally regenerated from the configured seed; this is documented as a replacement seam for deterministic full-world persistence.
+- `EnvironmentFeature` adds deterministic neutral walls, corridors, ramps, movable rigidbodies, and water to the world. Features expose physical state only; no hiding, defense, or food-use semantics are sent to controllers.
+- `SimulationHistory` stores consequential natural-history events, learning telemetry, combat statistics, descendant queries, and a `NaturalHistoryCatalog` that derives lineage summaries, extinct branches, and bounded post-hoc genome-distance groups.
+- The compact-first observation UI includes encounters, kills, physical features, lineages, extinct branches, species/morphotype analysis, recent events, lifetime-learning telemetry, ecological traits, neural intent, descendants, and save/load controls. F1 opens the full dashboard while the default HUD leaves the world visible.
+- Live-world snapshot schema 5 restores current genomes, full body-part poses and velocities, generation/cycle, energy, age, offspring, combat counters, resource and movable-object state, acquired neural fast weights/traces/memory/reward baseline, deterministic random streams, and the observation archive.
 
-The remaining explicitly bounded seams are a flat ground plane, a fixed feed-forward brain topology, a maximum body-part/actuator budget, and collision isolation between articulated individuals by default. The last setting can be toggled in the UI; generic spatial encounters already operate independently of that physics-stability guard. These are implementation boundaries, not ecological role definitions, and can be replaced by a Jobs/Burst/ECS simulation backend without changing the genome or history contract.
+The remaining explicitly bounded seams are fixed neural I/O capacity, a maximum body/organ budget, handcrafted physical world generation, bounded in-memory history, and GameObject/PhysX execution. Collision isolation between articulated individuals remains enabled by default as a stability guard and can be toggled; generic spatial encounters work independently. These are implementation boundaries, not ecological role definitions, and the genome/history contracts remain replaceable by Jobs/Burst/ECS and multi-world execution.
+
+## 12. Current verification record
+
+- Unity compilation succeeds on `6000.5.8f1`; all 47 EditMode tests pass.
+- In Play Mode, lifetime-learning fast weights changed during a single life while inherited base arrays remained unchanged under tests.
+- Live save/load restored generation and population in the running world, including the acquired brain-state contract.
+- A render-off x100 soak advanced from generation 1 to generation 17, produced natural population decline/extinction, paused at extinction, and emitted no Unity Console errors.
+- A clean `StandaloneWindows64` Player build succeeded through an ASCII junction (used to avoid a Unity Pipeline string-conversion bug with the Japanese project path), and a 10-second headless Player smoke run emitted no runtime errors.

@@ -13,6 +13,7 @@ namespace EvolutionLab
         private Vector2 controlsScrollPosition, selectedScrollPosition;
         private Rect statsRect, controlsRect, historyRect, selectedRect, compactNavigationRect;
         private bool ecologyExpanded = true, historyExpanded = true, historyPanelExpanded = true, tuningExpanded, cameraExpanded, archiveExpanded, selectionExpanded = true;
+        private bool hudCompact = true;
         private int compactTab;
 
         private static readonly Color Accent = new Color(0.20f, 0.78f, 0.82f, 1f);
@@ -40,10 +41,23 @@ namespace EvolutionLab
         {
             if (simulation == null) return;
             EnsureStyles();
+            if (Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.F1)
+            {
+                hudCompact = !hudCompact;
+                Event.current.Use();
+            }
             float width = Mathf.Max(320f, Screen.width);
             float height = Mathf.Max(240f, Screen.height);
             float margin = width < 700f ? 10f : 16f;
             float gap = width < 700f ? 8f : 12f;
+            if (hudCompact)
+            {
+                controlsRect = historyRect = selectedRect = compactNavigationRect = Rect.zero;
+                float compactHudWidth = Mathf.Min(width - margin * 2f, 720f);
+                statsRect = new Rect(margin, margin, compactHudWidth, compactHudWidth < 520f ? 112f : 76f);
+                DrawCompactHud();
+                return;
+            }
             statsRect = new Rect(margin, margin, width - margin * 2f, width < 700f ? 208f : 196f);
             bool compact = width < 700f;
             bool medium = !compact && width < 980f;
@@ -88,6 +102,56 @@ namespace EvolutionLab
             if (selectedRect.width > 0f) DrawSelectedCreature();
         }
 
+        private void DrawCompactHud()
+        {
+            GUI.Box(statsRect, GUIContent.none, emphasisPanelStyle);
+            if (statsRect.width < 520f)
+            {
+                GUI.Label(new Rect(statsRect.x + 12f, statsRect.y + 8f, statsRect.width - 24f, 22f), "EVOLUTION LAB", headerStyle);
+                GUI.Label(
+                    new Rect(statsRect.x + 12f, statsRect.y + 34f, statsRect.width - 24f, 22f),
+                    "G" + simulation.Generation + "   Pop " + simulation.PopulationCount + "/" + simulation.CarryingCapacity
+                    + "   Best " + simulation.BestFitness.ToString("0.000") + "   x" + simulation.SimulationSpeed.ToString("0"),
+                    smallStyle);
+                float half = (statsRect.width - 28f) * 0.5f;
+                if (GUI.Button(new Rect(statsRect.x + 10f, statsRect.y + 68f, half, 32f), simulation.IsPaused ? "Resume" : "Pause", simulation.IsPaused ? selectedButtonStyle : buttonStyle))
+                {
+                    simulation.TogglePause();
+                }
+                if (GUI.Button(new Rect(statsRect.x + 18f + half, statsRect.y + 68f, half, 32f), "Dashboard  F1", selectedButtonStyle))
+                {
+                    hudCompact = false;
+                }
+                return;
+            }
+
+            float buttonWidth = 112f;
+            float pauseWidth = 82f;
+            float right = statsRect.xMax - 10f;
+            GUI.Label(new Rect(statsRect.x + 14f, statsRect.y + 9f, 180f, 22f), "EVOLUTION LAB", headerStyle);
+            GUI.Label(
+                new Rect(statsRect.x + 14f, statsRect.y + 38f, statsRect.width - buttonWidth - pauseWidth - 54f, 22f),
+                "G" + simulation.Generation
+                + "   Population " + simulation.PopulationCount + "/" + simulation.CarryingCapacity
+                + "   Fitness " + simulation.BestFitness.ToString("0.000")
+                + "   x" + simulation.SimulationSpeed.ToString("0"),
+                labelStyle);
+            if (GUI.Button(
+                new Rect(right - buttonWidth - pauseWidth - 8f, statsRect.y + 22f, pauseWidth, 34f),
+                simulation.IsPaused ? "Resume" : "Pause",
+                simulation.IsPaused ? selectedButtonStyle : buttonStyle))
+            {
+                simulation.TogglePause();
+            }
+            if (GUI.Button(
+                new Rect(right - buttonWidth, statsRect.y + 22f, buttonWidth, 34f),
+                "Dashboard  F1",
+                selectedButtonStyle))
+            {
+                hudCompact = false;
+            }
+        }
+
         private void DrawCompactNavigation(Rect rect)
         {
             float width = (rect.width - 8f) / 3f;
@@ -101,7 +165,11 @@ namespace EvolutionLab
             GUI.Box(statsRect, GUIContent.none, emphasisPanelStyle);
             float pad = statsRect.width < 700f ? 12f : 18f;
             Rect content = new Rect(statsRect.x + pad, statsRect.y + 11f, statsRect.width - pad * 2f, statsRect.height - 22f);
-            GUI.Label(new Rect(content.x, content.y, content.width, 24f), "EVOLUTION LAB", headerStyle);
+            GUI.Label(new Rect(content.x, content.y, content.width - 132f, 24f), "EVOLUTION LAB", headerStyle);
+            if (GUI.Button(new Rect(content.xMax - 124f, content.y, 124f, 28f), "Minimize HUD  F1", buttonStyle))
+            {
+                hudCompact = true;
+            }
             GUI.Label(new Rect(content.x, content.y + 24f, content.width, 17f), "ARTIFICIAL LIFE / NATURAL HISTORY", mutedStyle);
             float colWidth = content.width > 690f ? content.width / 3f : content.width / 2f;
             DrawStatusValue(content.x, content.y + 50f, colWidth, "GENERATION", simulation.Generation.ToString(), Accent);
@@ -348,8 +416,8 @@ namespace EvolutionLab
             GUI.Label(new Rect(selectedRect.x + 16f, selectedRect.y + 42f, selectedRect.width - 32f, 18f), selectedCreature == null ? "No individual selected" : (simulation.IsFollowingSelected ? "TRACKING ACTIVE  ·  " : "SELECTED  ·  ") + selectedCreature.EcologicalTendency, selectedCreature != null ? SuccessLabel() : mutedStyle);
             if (!selectionExpanded) return;
             Rect viewport = new Rect(selectedRect.x + 8f, selectedRect.y + 65f, selectedRect.width - 16f, selectedRect.height - 73f);
-            selectedScrollPosition = GUI.BeginScrollView(viewport, selectedScrollPosition, new Rect(0f, 0f, viewport.width - 18f, 420f));
-            GUILayout.BeginArea(new Rect(8f, 8f, viewport.width - 34f, 390f));
+            selectedScrollPosition = GUI.BeginScrollView(viewport, selectedScrollPosition, new Rect(0f, 0f, viewport.width - 18f, 520f));
+            GUILayout.BeginArea(new Rect(8f, 8f, viewport.width - 34f, 490f));
             if (selectedCreature == null || selectedCreature.Genome == null)
             {
                 GUILayout.Label("Click a body part to inspect an individual.", smallStyle); GUILayout.Label("Selection details and ancestry will appear here.", mutedStyle);
@@ -374,6 +442,18 @@ namespace EvolutionLab
                 GUILayout.Label("Brain  intent " + selectedCreature.InteractionIntent.ToString("0.00") + "  social " + selectedCreature.SocialIntent.ToString("0.00") + "  kills " + selectedCreature.KillCount, smallStyle);
             }
             LifetimeLearningGene learning = genome.brain == null ? null : genome.brain.learning;
+            if (genome.brain != null)
+            {
+                GUILayout.Label(
+                    "Brain topology  " + genome.brain.activeHiddenCount + " / " + BrainGene.HiddenCount
+                    + " hidden neurons  ·  8 motor + 4 intent outputs",
+                    smallStyle);
+            }
+            GUILayout.Label(
+                "Organs  " + (genome.sensors == null ? 0 : genome.sensors.Count)
+                + " sensors  ·  mouth reach " + genome.mouth.reach.ToString("0.00")
+                + "  efficiency " + genome.mouth.efficiency.ToString("0.00"),
+                smallStyle);
             if (learning != null)
             {
                 string learningState = selectedCreature.LifetimeLearningEnabled ? "ACTIVE" : "DISABLED";

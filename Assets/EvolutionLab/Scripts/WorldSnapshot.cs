@@ -51,6 +51,7 @@ namespace EvolutionLab
         public bool hasActivation;
         public float pendingHomeostaticSignal;
         public float lastHomeostaticSignal;
+        public float rewardBaseline;
         public float adaptationMagnitude;
     }
 
@@ -78,7 +79,8 @@ namespace EvolutionLab
     [Serializable]
     public sealed class WorldSnapshotArchive
     {
-        public int schemaVersion = 4;
+        // Schema 5 adds resource transforms and the adaptive reward baseline.
+        public int schemaVersion = 5;
         public int randomSeed;
         public uint engineRandomState;
         public uint environmentResourceRandomState;
