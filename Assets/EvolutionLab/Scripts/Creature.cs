@@ -185,6 +185,38 @@ namespace EvolutionLab
             DisableMotors();
         }
 
+        /// <summary>
+        /// Turns this embodiment into a non-simulated historical display.
+        /// The genome and renderers remain available, but the preview cannot
+        /// affect the live population or accumulate physics state.
+        /// </summary>
+        public void SetObservationPreview()
+        {
+            StopEvaluation();
+            for (int i = 0; i < bodyParts.Count; i++)
+            {
+                Rigidbody bodyPart = bodyParts[i];
+                if (bodyPart == null)
+                {
+                    continue;
+                }
+
+                bodyPart.isKinematic = true;
+                bodyPart.useGravity = false;
+                bodyPart.detectCollisions = false;
+                bodyPart.linearVelocity = Vector3.zero;
+                bodyPart.angularVelocity = Vector3.zero;
+            }
+
+            for (int i = 0; i < colliders.Count; i++)
+            {
+                if (colliders[i] != null)
+                {
+                    colliders[i].enabled = false;
+                }
+            }
+        }
+
         private void DisableMotors()
         {
             for (int i = 0; i < joints.Count; i++)

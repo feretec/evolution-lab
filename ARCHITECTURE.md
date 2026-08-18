@@ -64,7 +64,7 @@ Creates the flat ground and owns environment-level setup. It exposes no semantic
 
 ### `SimulationHistory`
 
-Stores generation-level records and bounded per-individual genome snapshots in a lightweight in-memory form. Each evaluated individual keeps its genome ID, parent IDs, generation, morphology counts, fitness, and a cloned genome, so an active creature can resolve a primary ancestry chain without depending on destroyed GameObjects. Generation records are capped at 2000 and individual snapshots at 8192 for long observation runs. Persistence/graph databases are still out of scope for this phase.
+Stores generation-level records and bounded per-individual genome snapshots in a lightweight in-memory form. Each evaluated individual keeps its genome ID, parent IDs, generation, morphology counts, fitness, and a cloned genome, so an active creature can resolve a primary ancestry chain without depending on destroyed GameObjects. Generation records are capped at 2000 and individual snapshots at 8192 for long observation runs. Prototype 1.5 can serialize this bounded observation history as JSON and load it back without serializing live GameObjects, physics state, or the engine's random stream.
 
 ### `EvolutionSimulation`
 
@@ -72,7 +72,7 @@ Scene-facing coordinator. It boots the engine, spawns and destroys embodiments, 
 
 ### `EvolutionLabUI`
 
-Prototype presentation layer implemented with runtime IMGUI. It renders statistics, a best/average fitness history graph, time controls, generation skip controls, selected-individual details, and a compact ancestry chain. It never mutates a genome directly.
+Prototype presentation layer implemented with runtime IMGUI. It renders statistics, a best/average fitness history graph, time controls, generation skip controls, selected-individual details, a compact ancestry chain, historical-genome preview controls, and history archive save/load controls. It never mutates a genome directly.
 
 ## 3. Prototype genome model
 
@@ -104,7 +104,7 @@ Natural population dynamics are not implemented here. The engine's `BreedNextGen
 
 The runtime bootstrap attaches `EvolutionSimulation` to a generated root object after `SampleScene` loads. It configures the existing camera/light and creates the ground, avoiding a large serialized scene diff during the blank-template phase. The camera is perspective-based and receives a separate `FreeCameraController`: WASD moves, Q/E move vertically, right-mouse drag looks, and the mouse wheel dollies. Camera input is unscaled; pointer-based camera input is disabled over the IMGUI panels so observation remains possible while paused.
 
-The UI uses Unity IMGUI so the prototype does not need a second input-action asset or serialized Canvas prefab. World selection uses the existing Input System mouse position and a physics raycast. The controls panel can be scrolled and exposes generation duration plus the main joint drive tuning values at runtime. Selecting an individual exposes a Follow/Unfollow camera command; following stores a camera offset relative to the selected root body and remains independent of simulation time scale. The history graph and ancestry display consume `SimulationHistory` snapshots rather than live scene references. This is a presentation choice only; a future UGUI/UI Toolkit front end can consume the same simulation snapshots.
+The UI uses Unity IMGUI so the prototype does not need a second input-action asset or serialized Canvas prefab. World selection uses the existing Input System mouse position and a physics raycast. The controls panel can be scrolled and exposes generation duration plus the main joint drive tuning values at runtime. Selecting an individual exposes a Follow/Unfollow camera command; following stores a camera offset relative to the selected root body and remains independent of simulation time scale. The history graph and ancestry display consume `SimulationHistory` snapshots rather than live scene references. A selected ancestry record can be rebuilt as a non-physical observation preview, while the live population remains responsible for evaluation. JSON archive load is intentionally history-only; it does not resume the current physics world or random sequence. This is a presentation choice only; a future UGUI/UI Toolkit front end can consume the same simulation snapshots.
 
 ## 7. Known prototype constraints and replacement seams
 

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -36,6 +37,10 @@ namespace EvolutionLab
         private float initialTimeScale = 1f;
         private bool initialized;
         private readonly List<IndividualHistoryRecord> selectedAncestry = new List<IndividualHistoryRecord>();
+        private Creature previewCreature;
+        private int ancestryCursor;
+        private string historyStatus = string.Empty;
+        private string historyArchivePath;
 
         public int Generation
         {
@@ -65,6 +70,16 @@ namespace EvolutionLab
         public IReadOnlyList<IndividualHistoryRecord> SelectedAncestry
         {
             get { return selectedAncestry; }
+        }
+
+        public int AncestryCursor
+        {
+            get { return ancestryCursor; }
+        }
+
+        public string HistoryStatus
+        {
+            get { return historyStatus; }
         }
 
         public float EvaluationElapsed
@@ -152,6 +167,7 @@ namespace EvolutionLab
             Time.timeScale = 1f;
             paused = false;
             simulationSpeed = 1f;
+            historyArchivePath = Path.Combine(Application.persistentDataPath, "EvolutionLabHistory.json");
 
             populationSize = Mathf.Clamp(populationSize, 4, 64);
             generationDuration = Mathf.Clamp(generationDuration, 4f, 120f);
@@ -284,6 +300,107 @@ namespace EvolutionLab
             else
             {
                 freeCamera.Follow(selectedCreature.RootBody.transform);
+            }
+        }
+
+        public void StepAncestry(int amount)
+        {
+            if (selectedAncestry.Count == 0)
+            {
+                return;
+            }
+
+            int nextCursor = Mathf.Clamp(ancestryCursor + amount, 0, selectedAncestry.Count - 1);
+            if (nextCursor != ancestryCursor)
+            {
+                ancestryCursor = nextCursor;
+                DestroyHistoryPreview();
+                historyStatus = "Selected G" + selectedAncestry[ancestryCursor].generation + " for preview.";
+            }
+        }
+
+        public void PreviewSelectedAncestry()
+        {
+            if (ancestryCursor < 0 || ancestryCursor >= selectedAncestry.Count)
+            {
+                return;
+            }
+
+            IndividualHistoryRecord record = selectedAncestry[ancestryCursor];
+            if (record == null || record.genome == null)
+            {
+                return;
+            }
+
+            DestroyHistoryPreview();
+            previewCreature = CreatureBuilder.Build(
+                record.genome,
+                new Vector3(5f, 2.4f, 0f),
+                new Color(0.25f, 0.9f, 1f, 1f),
+                jointDriveForce,
+                jointTargetSpeedDegrees,
+                jointDamping,
+                settlingDuration);
+            previewCreature.SetObservationPreview();
+            previewCreature.gameObject.name = "HistoricalPreview_G" + record.generation;
+            historyStatus = "Previewing G" + record.generation + " " + record.genomeId + ".";
+        }
+
+        public void ClearHistoryPreview()
+        {
+            DestroyHistoryPreview();
+            historyStatus = "Historical preview cleared.";
+        }
+
+        public void SaveHistoryArchive()
+        {
+            if (engine == null || engine.History == null)
+            {
+                return;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(Application.persistentDataPath);
+                File.WriteAllText(historyArchivePath, engine.History.ToJson());
+                historyStatus = "Saved " + engine.History.Generations.Count + " generations to the history archive.";
+            }
+            catch (System.Exception exception)
+            {
+                historyStatus = "History save failed: " + exception.Message;
+            }
+        }
+
+        public void LoadHistoryArchive()
+        {
+            if (engine == null || engine.History == null)
+            {
+                return;
+            }
+
+            try
+            {
+                if (!File.Exists(historyArchivePath))
+                {
+                    historyStatus = "No history archive found yet.";
+                    return;
+                }
+
+                string json = File.ReadAllText(historyArchivePath);
+                if (!engine.History.TryLoadJson(json))
+                {
+                    historyStatus = "History archive is invalid.";
+                    return;
+                }
+
+                ClearSelectedCreature();
+                paused = true;
+                Time.timeScale = 0f;
+                historyStatus = "Loaded " + engine.History.Generations.Count + " generations from the history archive.";
+            }
+            catch (System.Exception exception)
+            {
+                historyStatus = "History load failed: " + exception.Message;
             }
         }
 
@@ -472,6 +589,8 @@ namespace EvolutionLab
 
             selectedCreature = null;
             selectedAncestry.Clear();
+            ancestryCursor = 0;
+            DestroyHistoryPreview();
             if (freeCamera != null)
             {
                 freeCamera.StopFollowing();
@@ -486,6 +605,8 @@ namespace EvolutionLab
         private void RefreshSelectedAncestry()
         {
             selectedAncestry.Clear();
+            ancestryCursor = 0;
+            DestroyHistoryPreview();
             if (engine == null || engine.History == null || selectedCreature == null || selectedCreature.Genome == null)
             {
                 return;
@@ -493,6 +614,18 @@ namespace EvolutionLab
 
             List<IndividualHistoryRecord> ancestry = engine.History.GetAncestry(selectedCreature.Genome, 8);
             selectedAncestry.AddRange(ancestry);
+        }
+
+        private void DestroyHistoryPreview()
+        {
+            if (previewCreature == null)
+            {
+                return;
+            }
+
+            previewCreature.gameObject.SetActive(false);
+            Destroy(previewCreature.gameObject);
+            previewCreature = null;
         }
 
         private void HandleWorldSelection()
@@ -575,6 +708,7 @@ namespace EvolutionLab
 
         private void OnDestroy()
         {
+            DestroyHistoryPreview();
             DestroyCreatures();
             Time.timeScale = initialTimeScale;
         }

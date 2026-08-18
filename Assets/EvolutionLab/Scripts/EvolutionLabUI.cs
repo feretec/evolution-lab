@@ -228,7 +228,7 @@ namespace EvolutionLab
                 controlsRect.y + 8f,
                 controlsRect.width - 16f,
                 controlsRect.height - 78f);
-            Rect contentRect = new Rect(0f, 0f, viewportRect.width - 18f, 720f);
+            Rect contentRect = new Rect(0f, 0f, viewportRect.width - 18f, 860f);
             controlsScrollPosition = GUI.BeginScrollView(viewportRect, controlsScrollPosition, contentRect);
             GUILayout.BeginArea(new Rect(8f, 8f, contentRect.width - 16f, contentRect.height - 16f));
             GUILayout.Label("SIMULATION CONTROLS", headerStyle);
@@ -349,6 +349,61 @@ namespace EvolutionLab
             GUILayout.Space(6f);
             GUILayout.Label("CAMERA", smallStyle);
             GUILayout.Label("WASD move / Q,E vertical / RMB look / Wheel dolly", smallStyle);
+
+            GUILayout.Space(8f);
+            GUILayout.Label("HISTORY BROWSER", smallStyle);
+            IReadOnlyList<IndividualHistoryRecord> ancestry = simulation.SelectedAncestry;
+            if (ancestry != null && ancestry.Count > 0)
+            {
+                IndividualHistoryRecord currentRecord = ancestry[simulation.AncestryCursor];
+                GUILayout.Label(
+                    "Viewing G" + currentRecord.generation + " / " + ancestry.Count,
+                    smallStyle);
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("<", buttonStyle, GUILayout.Height(24f)))
+                {
+                    simulation.StepAncestry(-1);
+                }
+
+                if (GUILayout.Button("Preview", buttonStyle, GUILayout.Height(24f)))
+                {
+                    simulation.PreviewSelectedAncestry();
+                }
+
+                if (GUILayout.Button(">", buttonStyle, GUILayout.Height(24f)))
+                {
+                    simulation.StepAncestry(1);
+                }
+
+                GUILayout.EndHorizontal();
+                if (GUILayout.Button("Clear preview", buttonStyle, GUILayout.Height(24f)))
+                {
+                    simulation.ClearHistoryPreview();
+                }
+            }
+            else
+            {
+                GUILayout.Label("Select an individual to browse its ancestry.", smallStyle);
+            }
+
+            GUILayout.Space(6f);
+            GUILayout.Label("HISTORY ARCHIVE", smallStyle);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Save", buttonStyle, GUILayout.Height(24f)))
+            {
+                simulation.SaveHistoryArchive();
+            }
+
+            if (GUILayout.Button("Load", buttonStyle, GUILayout.Height(24f)))
+            {
+                simulation.LoadHistoryArchive();
+            }
+
+            GUILayout.EndHorizontal();
+            if (!string.IsNullOrEmpty(simulation.HistoryStatus))
+            {
+                GUILayout.Label(simulation.HistoryStatus, wrapStyle);
+            }
             GUILayout.EndArea();
             GUI.EndScrollView();
 

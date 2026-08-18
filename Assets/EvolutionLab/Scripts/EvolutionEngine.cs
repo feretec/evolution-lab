@@ -49,6 +49,18 @@ namespace EvolutionLab
         public float bestFitness;
         public float averageFitness;
         public string bestGenomeId = string.Empty;
+
+        public GenerationRecord Clone()
+        {
+            return new GenerationRecord
+            {
+                generation = generation,
+                population = population,
+                bestFitness = bestFitness,
+                averageFitness = averageFitness,
+                bestGenomeId = bestGenomeId
+            };
+        }
     }
 
     [Serializable]
@@ -94,6 +106,13 @@ namespace EvolutionLab
     }
 
     [Serializable]
+    public sealed class SimulationHistoryArchive
+    {
+        public List<GenerationRecord> generations = new List<GenerationRecord>();
+        public List<IndividualHistoryRecord> individuals = new List<IndividualHistoryRecord>();
+    }
+
+    [Serializable]
     public sealed class SimulationHistory
     {
         private const int MaxGenerationRecords = 2000;
@@ -115,6 +134,87 @@ namespace EvolutionLab
         public IReadOnlyList<IndividualHistoryRecord> Individuals
         {
             get { return individuals; }
+        }
+
+        public string ToJson()
+        {
+            EnsureIndex();
+            var archive = new SimulationHistoryArchive();
+            for (int i = 0; i < generations.Count; i++)
+            {
+                if (generations[i] != null)
+                {
+                    archive.generations.Add(generations[i].Clone());
+                }
+            }
+
+            for (int i = 0; i < individuals.Count; i++)
+            {
+                IndividualHistoryRecord record = CloneRecord(individuals[i]);
+                if (record != null)
+                {
+                    archive.individuals.Add(record);
+                }
+            }
+
+            return JsonUtility.ToJson(archive, true);
+        }
+
+        public bool TryLoadJson(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return false;
+            }
+
+            SimulationHistoryArchive archive;
+            try
+            {
+                archive = JsonUtility.FromJson<SimulationHistoryArchive>(json);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+
+            if (archive == null || archive.generations == null || archive.individuals == null)
+            {
+                return false;
+            }
+
+            generations = new List<GenerationRecord>();
+            for (int i = 0; i < archive.generations.Count; i++)
+            {
+                GenerationRecord record = archive.generations[i];
+                if (record != null)
+                {
+                    generations.Add(record.Clone());
+                }
+            }
+
+            individuals = new List<IndividualHistoryRecord>();
+            for (int i = 0; i < archive.individuals.Count; i++)
+            {
+                IndividualHistoryRecord record = CloneRecord(archive.individuals[i]);
+                if (record != null && record.genome != null && !string.IsNullOrEmpty(record.genomeId))
+                {
+                    individuals.Add(record);
+                }
+            }
+
+            while (generations.Count > MaxGenerationRecords)
+            {
+                generations.RemoveAt(0);
+            }
+
+            while (individuals.Count > MaxIndividualRecords)
+            {
+                individuals.RemoveAt(0);
+            }
+
+            individualById = null;
+            EnsureIndex();
+            return true;
         }
 
         public void Record(GenerationReport report)
@@ -302,6 +402,28 @@ namespace EvolutionLab
                     individualById[record.genomeId] = record;
                 }
             }
+        }
+
+        private static IndividualHistoryRecord CloneRecord(IndividualHistoryRecord source)
+        {
+            if (source == null || source.genome == null)
+            {
+                return null;
+            }
+
+            return new IndividualHistoryRecord
+            {
+                genomeId = source.genomeId,
+                parentId = source.parentId,
+                secondaryParentId = source.secondaryParentId,
+                generation = source.generation,
+                fitness = source.fitness,
+                distance = source.distance,
+                bodyPartCount = source.bodyPartCount,
+                jointCount = source.jointCount,
+                hasFitness = source.hasFitness,
+                genome = source.genome.Clone()
+            };
         }
     }
 
