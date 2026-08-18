@@ -64,7 +64,7 @@ Verify that a variable physical body and its neural controller can evolve togeth
 
 - A genome-defined tree of multiple physical body parts.
 - Rigidbodies and colliders for each part.
-- Revolute/hinge-style joints with genome-defined limits and drive strength.
+- Configurable joints with genome-defined angular limits and drive strength. Prototype 1 locks the three linear axes and two secondary angular axes so body parts remain physically attached while the primary angular axis is actuated.
 - A small feed-forward neural controller whose weights are stored in the genome.
 - A runtime `Creature` that can be destroyed and rebuilt from the genome.
 

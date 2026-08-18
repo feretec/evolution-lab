@@ -126,6 +126,11 @@ namespace EvolutionLab
                 // The primary axis is oriented along local forward so the current
                 // prototype still bends in the ground plane while leaving a clean
                 // seam for future multi-axis joint genes.
+                // ConfigurableJoint defaults to free linear motion; explicitly lock
+                // all three linear axes so a joint cannot pull the body apart.
+                joint.xMotion = ConfigurableJointMotion.Locked;
+                joint.yMotion = ConfigurableJointMotion.Locked;
+                joint.zMotion = ConfigurableJointMotion.Locked;
                 joint.angularXMotion = ConfigurableJointMotion.Limited;
                 joint.angularYMotion = ConfigurableJointMotion.Locked;
                 joint.angularZMotion = ConfigurableJointMotion.Locked;
