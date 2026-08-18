@@ -11,14 +11,21 @@ namespace EvolutionLab
     {
         [Header("Prototype 1 settings")]
         [SerializeField] private int populationSize = 24;
-        [SerializeField] private float generationDuration = 6f;
+        [SerializeField] private float generationDuration = 20f;
         [SerializeField] private int randomSeed = 172903;
+
+        [Header("Physics tuning")]
+        [SerializeField] private float jointDriveForce = 110f;
+        [SerializeField] private float jointTargetSpeedDegrees = 240f;
+        [SerializeField] private float jointDamping = 8f;
+        [SerializeField] private float settlingDuration = 0.35f;
 
         private readonly List<Creature> creatures = new List<Creature>();
         private EvolutionEngine engine;
         private EnvironmentController environment;
         private EvolutionLabUI ui;
         private Camera mainCamera;
+        private FreeCameraController freeCamera;
         private Creature selectedCreature;
         private float evaluationElapsed;
         private float simulationSpeed = 1f;
@@ -57,6 +64,26 @@ namespace EvolutionLab
         public float GenerationDuration
         {
             get { return generationDuration; }
+        }
+
+        public float JointDriveForce
+        {
+            get { return jointDriveForce; }
+        }
+
+        public float JointTargetSpeedDegrees
+        {
+            get { return jointTargetSpeedDegrees; }
+        }
+
+        public float JointDamping
+        {
+            get { return jointDamping; }
+        }
+
+        public float SettlingDuration
+        {
+            get { return settlingDuration; }
         }
 
         public bool IsPaused
@@ -111,7 +138,11 @@ namespace EvolutionLab
             simulationSpeed = 1f;
 
             populationSize = Mathf.Clamp(populationSize, 4, 64);
-            generationDuration = Mathf.Clamp(generationDuration, 2f, 30f);
+            generationDuration = Mathf.Clamp(generationDuration, 4f, 120f);
+            jointDriveForce = Mathf.Clamp(jointDriveForce, 10f, 500f);
+            jointTargetSpeedDegrees = Mathf.Clamp(jointTargetSpeedDegrees, 20f, 720f);
+            jointDamping = Mathf.Clamp(jointDamping, 0f, 60f);
+            settlingDuration = Mathf.Clamp(settlingDuration, 0f, 3f);
             environment = gameObject.AddComponent<EnvironmentController>();
             environment.Initialize();
             ConfigureCamera();
@@ -120,6 +151,10 @@ namespace EvolutionLab
             engine.Initialize();
             ui = gameObject.AddComponent<EvolutionLabUI>();
             ui.Bind(this);
+            if (freeCamera != null)
+            {
+                freeCamera.BindUI(ui);
+            }
             SpawnPopulation(engine.CurrentPopulation);
         }
 
@@ -154,6 +189,68 @@ namespace EvolutionLab
             if (!paused)
             {
                 Time.timeScale = simulationSpeed;
+            }
+        }
+
+        public void SetGenerationDuration(float duration)
+        {
+            generationDuration = Mathf.Clamp(duration, 4f, 120f);
+        }
+
+        public void AdjustGenerationDuration(float amount)
+        {
+            SetGenerationDuration(generationDuration + amount);
+        }
+
+        public void SetJointDriveForce(float force)
+        {
+            jointDriveForce = Mathf.Clamp(force, 10f, 500f);
+            ApplyPhysicsTuning();
+        }
+
+        public void AdjustJointDriveForce(float amount)
+        {
+            SetJointDriveForce(jointDriveForce + amount);
+        }
+
+        public void SetJointTargetSpeedDegrees(float speed)
+        {
+            jointTargetSpeedDegrees = Mathf.Clamp(speed, 20f, 720f);
+            ApplyPhysicsTuning();
+        }
+
+        public void AdjustJointTargetSpeedDegrees(float amount)
+        {
+            SetJointTargetSpeedDegrees(jointTargetSpeedDegrees + amount);
+        }
+
+        public void SetJointDamping(float damping)
+        {
+            jointDamping = Mathf.Clamp(damping, 0f, 60f);
+            ApplyPhysicsTuning();
+        }
+
+        public void AdjustJointDamping(float amount)
+        {
+            SetJointDamping(jointDamping + amount);
+        }
+
+        public void SetSettlingDuration(float duration)
+        {
+            settlingDuration = Mathf.Clamp(duration, 0f, 3f);
+            ApplyPhysicsTuning();
+        }
+
+        public void AdjustSettlingDuration(float amount)
+        {
+            SetSettlingDuration(settlingDuration + amount);
+        }
+
+        public void ResetCameraView()
+        {
+            if (freeCamera != null)
+            {
+                freeCamera.ResetView();
             }
         }
 
@@ -254,7 +351,14 @@ namespace EvolutionLab
                     Mathf.Repeat((i / (float)genomes.Count) * 0.78f + Generation * 0.013f, 1f),
                     0.56f,
                     0.94f);
-                Creature creature = CreatureBuilder.Build(genomes[i], origin, color);
+                Creature creature = CreatureBuilder.Build(
+                    genomes[i],
+                    origin,
+                    color,
+                    jointDriveForce,
+                    jointTargetSpeedDegrees,
+                    jointDamping,
+                    settlingDuration);
                 creature.Clicked += SelectCreature;
                 creatures.Add(creature);
             }
@@ -298,6 +402,23 @@ namespace EvolutionLab
             if (ui != null)
             {
                 ui.SetSelectedCreature(selectedCreature);
+            }
+        }
+
+        private void ApplyPhysicsTuning()
+        {
+            for (int i = 0; i < creatures.Count; i++)
+            {
+                if (creatures[i] == null)
+                {
+                    continue;
+                }
+
+                creatures[i].SetPhysicsTuning(
+                    jointDriveForce,
+                    jointTargetSpeedDegrees,
+                    jointDamping,
+                    settlingDuration);
             }
         }
 
@@ -358,13 +479,20 @@ namespace EvolutionLab
                 cameraObject.AddComponent<AudioListener>();
             }
 
-            mainCamera.orthographic = true;
-            mainCamera.orthographicSize = 19.5f;
-            // Top-down view keeps every lane readable while forward motion runs left-to-right.
-            mainCamera.transform.position = new Vector3(10f, 30f, 0f);
-            mainCamera.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
+            mainCamera.orthographic = false;
+            mainCamera.fieldOfView = 58f;
+            mainCamera.nearClipPlane = 0.05f;
+            mainCamera.farClipPlane = 500f;
             mainCamera.backgroundColor = new Color(0.025f, 0.045f, 0.065f, 1f);
             mainCamera.clearFlags = CameraClearFlags.SolidColor;
+
+            freeCamera = mainCamera.GetComponent<FreeCameraController>();
+            if (freeCamera == null)
+            {
+                freeCamera = mainCamera.gameObject.AddComponent<FreeCameraController>();
+            }
+
+            freeCamera.Configure(new Vector3(11f, 23f, -34f), new Vector3(5f, 0f, 0f));
         }
 
         private void DestroyCreatures()

@@ -8,7 +8,14 @@ namespace EvolutionLab
     /// </summary>
     public static class CreatureBuilder
     {
-        public static Creature Build(CreatureGenome sourceGenome, Vector3 origin, Color color)
+        public static Creature Build(
+            CreatureGenome sourceGenome,
+            Vector3 origin,
+            Color color,
+            float jointDriveForce,
+            float jointTargetSpeedDegrees,
+            float jointDamping,
+            float settlingDuration)
         {
             CreatureGenome genome = sourceGenome == null ? new CreatureGenome() : sourceGenome;
             genome.Repair();
@@ -34,7 +41,7 @@ namespace EvolutionLab
             var rotations = new Quaternion[partCount];
             var partObjects = new GameObject[partCount];
             var rigidbodies = new List<Rigidbody>(partCount);
-            var joints = new List<HingeJoint>(Mathf.Max(0, partCount - 1));
+            var joints = new List<ConfigurableJoint>(Mathf.Max(0, partCount - 1));
             var renderers = new List<Renderer>(partCount);
             var colliders = new List<Collider>(partCount);
 
@@ -102,31 +109,56 @@ namespace EvolutionLab
             {
                 BodyPartGene gene = genome.bodyParts[i];
                 int parentIndex = Mathf.Clamp(gene.parentIndex, 0, i - 1);
-                HingeJoint joint = partObjects[i].AddComponent<HingeJoint>();
+                ConfigurableJoint joint = partObjects[i].AddComponent<ConfigurableJoint>();
                 joint.connectedBody = rigidbodies[parentIndex];
                 joint.autoConfigureConnectedAnchor = false;
                 joint.anchor = Vector3.left * (gene.length * 0.45f);
                 Vector3 parentAnchorWorld = positions[i] + rotations[i] * joint.anchor;
                 joint.connectedAnchor = partObjects[parentIndex].transform.InverseTransformPoint(parentAnchorWorld);
                 joint.axis = Vector3.forward;
+                joint.secondaryAxis = Vector3.up;
+                joint.configuredInWorldSpace = false;
                 joint.enableCollision = false;
                 joint.breakForce = float.PositiveInfinity;
                 joint.breakTorque = float.PositiveInfinity;
 
-                JointLimits limits = joint.limits;
-                limits.min = -gene.jointLimit;
-                limits.max = gene.jointLimit;
-                limits.bounciness = 0f;
-                limits.contactDistance = 2f;
-                joint.limits = limits;
-                joint.useLimits = true;
+                // ConfigurableJoint uses its primary (local X) axis for angular X.
+                // The primary axis is oriented along local forward so the current
+                // prototype still bends in the ground plane while leaving a clean
+                // seam for future multi-axis joint genes.
+                joint.angularXMotion = ConfigurableJointMotion.Limited;
+                joint.angularYMotion = ConfigurableJointMotion.Locked;
+                joint.angularZMotion = ConfigurableJointMotion.Locked;
 
-                JointMotor motor = joint.motor;
-                motor.targetVelocity = 0f;
-                motor.force = gene.driveStrength * 25f;
-                motor.freeSpin = false;
-                joint.motor = motor;
-                joint.useMotor = false;
+                SoftJointLimit lowLimit = joint.lowAngularXLimit;
+                lowLimit.limit = -gene.jointLimit;
+                lowLimit.bounciness = 0f;
+                lowLimit.contactDistance = 2f;
+                joint.lowAngularXLimit = lowLimit;
+
+                SoftJointLimit highLimit = joint.highAngularXLimit;
+                highLimit.limit = gene.jointLimit;
+                highLimit.bounciness = 0f;
+                highLimit.contactDistance = 2f;
+                joint.highAngularXLimit = highLimit;
+
+                joint.rotationDriveMode = RotationDriveMode.XYAndZ;
+                joint.angularXDrive = new JointDrive
+                {
+                    positionSpring = 0f,
+                    positionDamper = jointDamping,
+                    maximumForce = gene.driveStrength * jointDriveForce
+                };
+                joint.angularYZDrive = new JointDrive
+                {
+                    positionSpring = 0f,
+                    positionDamper = 0f,
+                    maximumForce = 0f
+                };
+                joint.targetAngularVelocity = Vector3.zero;
+                joint.projectionMode = JointProjectionMode.PositionAndRotation;
+                joint.projectionDistance = 0.08f;
+                joint.projectionAngle = 8f;
                 joints.Add(joint);
             }
 
@@ -143,7 +175,18 @@ namespace EvolutionLab
                 }
             }
 
-            creature.Configure(genome, rigidbodies, joints, renderers, colliders, material, color);
+            creature.Configure(
+                genome,
+                rigidbodies,
+                joints,
+                renderers,
+                colliders,
+                material,
+                color,
+                jointDriveForce,
+                jointTargetSpeedDegrees,
+                jointDamping,
+                settlingDuration);
             creature.BeginEvaluation();
             return creature;
         }

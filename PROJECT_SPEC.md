@@ -153,7 +153,9 @@ The current prototype is complete only when it is observable and interactable, n
 Prototype 1 is implemented under `Assets/EvolutionLab/Scripts` with runtime bootstrapping from `SampleScene`.
 
 - Genome-defined body-part trees, dimensions, joint limits, drive strength, and brain weights are implemented.
-- Physical rigidbodies, colliders, hinge joints, neural actuation, forward-displacement fitness, selection, crossover, mutation, lineage IDs, and generation history are implemented.
-- Runtime IMGUI exposes generation/population/best/average fitness, pause, x1/x10/x100 speed controls, generation skips, and individual inspection.
+- Physical rigidbodies, colliders, configurable joints, neural actuation, forward-displacement fitness, selection, crossover, mutation, lineage IDs, and generation history are implemented.
+- Runtime IMGUI exposes generation/population/best/average fitness, pause, x1/x10/x100 speed controls, generation skips, individual inspection, generation-duration controls, and joint-drive tuning.
+- A perspective free camera is available for observation: WASD movement, Q/E vertical movement, right-mouse look, mouse-wheel dolly, and a reset-view command. Camera input is independent of the simulation time scale.
+- Default evaluation duration is 20 seconds. Joint drive force, target angular speed, damping, and settling duration are serialized simulation parameters and the main values can also be adjusted while running.
 - Unity `6000.5.8f1` Play Mode was exercised through multiple generations, including selection and fast-forward controls.
 - Fixed-population displacement fitness, flat ground, lane isolation, and the fixed-size brain are still explicit Prototype 1 constraints; they are not the final ecology design.

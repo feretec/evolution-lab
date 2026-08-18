@@ -16,6 +16,7 @@ namespace EvolutionLab
         private GUIStyle smallStyle;
         private GUIStyle buttonStyle;
         private GUIStyle selectedButtonStyle;
+        private Vector2 controlsScrollPosition;
         private Rect statsRect;
         private Rect controlsRect;
         private Rect selectedRect;
@@ -49,8 +50,8 @@ namespace EvolutionLab
             float width = Mathf.Max(960f, Screen.width);
             float height = Mathf.Max(540f, Screen.height);
             statsRect = new Rect(18f, 18f, 350f, 210f);
-            controlsRect = new Rect(width - 348f, 18f, 330f, 250f);
-            selectedRect = new Rect(width - 348f, height - 310f, 330f, 292f);
+            controlsRect = new Rect(width - 368f, 18f, 350f, height - 36f);
+            selectedRect = new Rect(18f, height - 230f, 350f, 212f);
 
             DrawStatistics();
             DrawControls();
@@ -78,7 +79,14 @@ namespace EvolutionLab
         private void DrawControls()
         {
             GUI.Box(controlsRect, GUIContent.none, panelStyle);
-            GUILayout.BeginArea(new Rect(controlsRect.x + 16f, controlsRect.y + 12f, controlsRect.width - 32f, controlsRect.height - 24f));
+            Rect viewportRect = new Rect(
+                controlsRect.x + 8f,
+                controlsRect.y + 8f,
+                controlsRect.width - 16f,
+                controlsRect.height - 78f);
+            Rect contentRect = new Rect(0f, 0f, viewportRect.width - 18f, 720f);
+            controlsScrollPosition = GUI.BeginScrollView(viewportRect, controlsScrollPosition, contentRect);
+            GUILayout.BeginArea(new Rect(8f, 8f, contentRect.width - 16f, contentRect.height - 16f));
             GUILayout.Label("SIMULATION CONTROLS", headerStyle);
             GUILayout.Space(8f);
 
@@ -116,12 +124,107 @@ namespace EvolutionLab
             GUILayout.EndHorizontal();
             GUILayout.Label("Queued: " + simulation.PendingGenerationSkips, smallStyle);
 
-            if (GUILayout.Button("Reset experiment", buttonStyle, GUILayout.Height(26f)))
+            GUILayout.Space(6f);
+            GUILayout.Label("EVALUATION WINDOW", smallStyle);
+            GUILayout.Label(
+                "Generation duration  " + simulation.GenerationDuration.ToString("0.0") + " s",
+                labelStyle);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("-5 s", buttonStyle, GUILayout.Height(25f)))
+            {
+                simulation.AdjustGenerationDuration(-5f);
+            }
+
+            if (GUILayout.Button("30 s", buttonStyle, GUILayout.Height(25f)))
+            {
+                simulation.SetGenerationDuration(30f);
+            }
+
+            if (GUILayout.Button("+5 s", buttonStyle, GUILayout.Height(25f)))
+            {
+                simulation.AdjustGenerationDuration(5f);
+            }
+
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(6f);
+            GUILayout.Label("JOINT PHYSICS", smallStyle);
+            GUILayout.Label("Drive force       " + simulation.JointDriveForce.ToString("0"), labelStyle);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Force -25", buttonStyle, GUILayout.Height(24f)))
+            {
+                simulation.AdjustJointDriveForce(-25f);
+            }
+
+            if (GUILayout.Button("Force +25", buttonStyle, GUILayout.Height(24f)))
+            {
+                simulation.AdjustJointDriveForce(25f);
+            }
+
+            GUILayout.EndHorizontal();
+            GUILayout.Label("Target speed     " + simulation.JointTargetSpeedDegrees.ToString("0") + " deg/s", labelStyle);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Speed -40", buttonStyle, GUILayout.Height(24f)))
+            {
+                simulation.AdjustJointTargetSpeedDegrees(-40f);
+            }
+
+            if (GUILayout.Button("Speed +40", buttonStyle, GUILayout.Height(24f)))
+            {
+                simulation.AdjustJointTargetSpeedDegrees(40f);
+            }
+
+            GUILayout.EndHorizontal();
+            GUILayout.Label("Damping          " + simulation.JointDamping.ToString("0.0"), labelStyle);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Damp -2", buttonStyle, GUILayout.Height(24f)))
+            {
+                simulation.AdjustJointDamping(-2f);
+            }
+
+            if (GUILayout.Button("Damp +2", buttonStyle, GUILayout.Height(24f)))
+            {
+                simulation.AdjustJointDamping(2f);
+            }
+
+            GUILayout.EndHorizontal();
+            GUILayout.Label("Settling         " + simulation.SettlingDuration.ToString("0.00") + " s", smallStyle);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Settle -0.1", buttonStyle, GUILayout.Height(24f)))
+            {
+                simulation.AdjustSettlingDuration(-0.1f);
+            }
+
+            if (GUILayout.Button("Settle +0.1", buttonStyle, GUILayout.Height(24f)))
+            {
+                simulation.AdjustSettlingDuration(0.1f);
+            }
+
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(6f);
+            GUILayout.Label("CAMERA", smallStyle);
+            GUILayout.Label("WASD move / Q,E vertical / RMB look / Wheel dolly", smallStyle);
+            GUILayout.EndArea();
+            GUI.EndScrollView();
+
+            float footerY = controlsRect.y + controlsRect.height - 62f;
+            float footerWidth = (controlsRect.width - 42f) * 0.5f;
+            if (GUI.Button(
+                    new Rect(controlsRect.x + 16f, footerY, footerWidth, 26f),
+                    "Reset camera view",
+                    buttonStyle))
+            {
+                simulation.ResetCameraView();
+            }
+
+            if (GUI.Button(
+                    new Rect(controlsRect.x + 26f + footerWidth, footerY, footerWidth, 26f),
+                    "Reset experiment",
+                    buttonStyle))
             {
                 simulation.ResetSimulation();
             }
-
-            GUILayout.EndArea();
         }
 
         private void DrawSelectedCreature()

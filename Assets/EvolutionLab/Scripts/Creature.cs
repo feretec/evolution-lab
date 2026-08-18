@@ -10,17 +10,22 @@ namespace EvolutionLab
     public sealed class Creature : MonoBehaviour
     {
         private readonly List<Rigidbody> bodyParts = new List<Rigidbody>();
-        private readonly List<HingeJoint> joints = new List<HingeJoint>();
+        private readonly List<ConfigurableJoint> joints = new List<ConfigurableJoint>();
         private readonly List<Renderer> renderers = new List<Renderer>();
         private readonly List<Collider> colliders = new List<Collider>();
 
         private BodyPartGene[] partGenes = Array.Empty<BodyPartGene>();
         private Vector3[] safePositions = Array.Empty<Vector3>();
         private Quaternion[] safeRotations = Array.Empty<Quaternion>();
+        private Quaternion[] jointRestRelativeRotations = Array.Empty<Quaternion>();
         private Brain brain;
         private Rigidbody rootBody;
         private Material bodyMaterial;
         private Color baseColor;
+        private float jointDriveForce = 100f;
+        private float jointTargetSpeedDegrees = 220f;
+        private float jointDamping = 8f;
+        private float settlingDuration = 0.35f;
         private float startX;
         private float bestX;
         private float brainClock;
@@ -59,11 +64,15 @@ namespace EvolutionLab
         public void Configure(
             CreatureGenome genome,
             IList<Rigidbody> rigidbodies,
-            IList<HingeJoint> hingeJoints,
+            IList<ConfigurableJoint> configurableJoints,
             IList<Renderer> bodyRenderers,
             IList<Collider> bodyColliders,
             Material material,
-            Color color)
+            Color color,
+            float initialDriveForce,
+            float initialTargetSpeedDegrees,
+            float initialDamping,
+            float initialSettlingDuration)
         {
             Genome = genome;
             bodyParts.Clear();
@@ -76,9 +85,9 @@ namespace EvolutionLab
                 bodyParts.AddRange(rigidbodies);
             }
 
-            if (hingeJoints != null)
+            if (configurableJoints != null)
             {
-                joints.AddRange(hingeJoints);
+                joints.AddRange(configurableJoints);
             }
 
             if (bodyRenderers != null)
@@ -105,11 +114,55 @@ namespace EvolutionLab
                 }
             }
 
+            jointRestRelativeRotations = new Quaternion[joints.Count];
+            for (int i = 0; i < joints.Count; i++)
+            {
+                ConfigurableJoint joint = joints[i];
+                jointRestRelativeRotations[i] = joint == null || joint.connectedBody == null
+                    ? Quaternion.identity
+                    : Quaternion.Inverse(joint.connectedBody.rotation) * joint.transform.rotation;
+            }
+
             brain = new Brain(genome == null ? null : genome.brain);
             rootBody = bodyParts.Count > 0 ? bodyParts[0] : null;
             bodyMaterial = material;
             baseColor = color;
+            SetPhysicsTuning(
+                initialDriveForce,
+                initialTargetSpeedDegrees,
+                initialDamping,
+                initialSettlingDuration);
             SetSelected(false);
+        }
+
+        public void SetPhysicsTuning(
+            float driveForce,
+            float targetSpeedDegrees,
+            float damping,
+            float evaluationSettlingDuration)
+        {
+            jointDriveForce = Mathf.Max(0f, driveForce);
+            jointTargetSpeedDegrees = Mathf.Max(0f, targetSpeedDegrees);
+            jointDamping = Mathf.Max(0f, damping);
+            settlingDuration = Mathf.Clamp(evaluationSettlingDuration, 0f, 3f);
+
+            for (int i = 0; i < joints.Count; i++)
+            {
+                ConfigurableJoint joint = joints[i];
+                if (joint == null)
+                {
+                    continue;
+                }
+
+                int geneIndex = i + 1;
+                float geneDriveStrength = geneIndex < partGenes.Length
+                    ? partGenes[geneIndex].driveStrength
+                    : 1f;
+                JointDrive drive = joint.angularXDrive;
+                drive.positionDamper = jointDamping;
+                drive.maximumForce = geneDriveStrength * jointDriveForce;
+                joint.angularXDrive = drive;
+            }
         }
 
         public void BeginEvaluation()
@@ -141,10 +194,7 @@ namespace EvolutionLab
                     continue;
                 }
 
-                JointMotor motor = joints[i].motor;
-                motor.targetVelocity = 0f;
-                joints[i].motor = motor;
-                joints[i].useMotor = false;
+                joints[i].targetAngularVelocity = Vector3.zero;
             }
         }
 
@@ -186,7 +236,7 @@ namespace EvolutionLab
             }
 
             // Let the randomly assembled rigidbodies settle before a brain applies torque.
-            if (brainClock < 0.5f)
+            if (brainClock < settlingDuration)
             {
                 bestX = Mathf.Max(bestX, rootBody.position.x);
                 brainClock += Time.fixedDeltaTime;
@@ -197,25 +247,23 @@ namespace EvolutionLab
             float[] outputs = brain.Evaluate(observations);
             for (int i = 0; i < joints.Count && i < outputs.Length; i++)
             {
-                HingeJoint joint = joints[i];
+                ConfigurableJoint joint = joints[i];
                 if (joint == null)
                 {
                     continue;
                 }
 
                 int geneIndex = i + 1;
-                float driveStrength = geneIndex < partGenes.Length ? partGenes[geneIndex].driveStrength : 1f;
                 if (!IsFinite(outputs[i]))
                 {
                     outputs[i] = 0f;
                 }
 
-                JointMotor motor = joint.motor;
-                motor.targetVelocity = outputs[i] * 80f;
-                motor.force = driveStrength * 25f;
-                motor.freeSpin = false;
-                joint.motor = motor;
-                joint.useMotor = true;
+                // ConfigurableJoint target angular velocity is expressed in
+                // radians per second in joint space. Its primary local X axis
+                // is mapped to the genome's single prototype actuator.
+                joint.targetAngularVelocity = Vector3.right
+                    * (outputs[i] * jointTargetSpeedDegrees * Mathf.Deg2Rad);
             }
 
             bestX = Mathf.Max(bestX, rootBody.position.x);
@@ -294,8 +342,8 @@ namespace EvolutionLab
                     }
 
                     float limit = i + 1 < partGenes.Length ? Mathf.Max(20f, partGenes[i + 1].jointLimit) : 90f;
-                    averageAngle += SafeClamp(joints[i].angle / limit, -1f, 1f);
-                    averageVelocity += SafeClamp(joints[i].velocity / 180f, -1f, 1f);
+                    averageAngle += SafeClamp(EstimateJointAngle(i) / limit, -1f, 1f);
+                    averageVelocity += SafeClamp(EstimateJointAngularVelocity(i) / 180f, -1f, 1f);
                 }
 
                 averageAngle /= joints.Count;
@@ -320,6 +368,60 @@ namespace EvolutionLab
                 height,
                 1f
             };
+        }
+
+        private float EstimateJointAngle(int index)
+        {
+            if (index < 0 || index >= joints.Count || index >= jointRestRelativeRotations.Length)
+            {
+                return 0f;
+            }
+
+            ConfigurableJoint joint = joints[index];
+            if (joint == null || joint.connectedBody == null)
+            {
+                return 0f;
+            }
+
+            Quaternion currentRelative = Quaternion.Inverse(joint.connectedBody.rotation) * joint.transform.rotation;
+            Quaternion delta = Quaternion.Inverse(jointRestRelativeRotations[index]) * currentRelative;
+            delta.ToAngleAxis(out float angle, out Vector3 axis);
+            if (!IsFinite(angle) || axis.sqrMagnitude < 0.0001f)
+            {
+                return 0f;
+            }
+
+            if (angle > 180f)
+            {
+                angle -= 360f;
+            }
+
+            Vector3 restAxis = jointRestRelativeRotations[index] * joint.axis.normalized;
+            if (Vector3.Dot(axis, restAxis) < 0f)
+            {
+                angle = -angle;
+            }
+
+            return Mathf.Clamp(angle, -180f, 180f);
+        }
+
+        private float EstimateJointAngularVelocity(int index)
+        {
+            if (index < 0 || index >= joints.Count)
+            {
+                return 0f;
+            }
+
+            ConfigurableJoint joint = joints[index];
+            Rigidbody child = joint == null ? null : joint.GetComponent<Rigidbody>();
+            if (joint == null || child == null || joint.connectedBody == null)
+            {
+                return 0f;
+            }
+
+            Vector3 axisWorld = joint.transform.TransformDirection(joint.axis).normalized;
+            Vector3 relativeAngularVelocity = child.angularVelocity - joint.connectedBody.angularVelocity;
+            return Vector3.Dot(relativeAngularVelocity, axisWorld) * Mathf.Rad2Deg;
         }
 
         private void OnDestroy()

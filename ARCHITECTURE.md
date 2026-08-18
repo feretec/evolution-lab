@@ -44,7 +44,7 @@ The builder is deliberately replaceable: a future ECS/Burst builder can consume 
 
 ### `Creature`
 
-Runtime embodiment and evaluation adapter. It owns the live rigidbodies/joints, constructs controller observations, applies brain outputs to joint motors, tracks start position and best forward progress, exposes an immutable evaluation result, and routes selection clicks.
+Runtime embodiment and evaluation adapter. It owns the live rigidbodies/joints, constructs controller observations, applies brain outputs to joint drives, tracks start position and best forward progress, exposes an immutable evaluation result, and routes selection clicks.
 
 The prototype uses `FixedUpdate` for controller actuation so physics remains the source of movement. The class must not contain population selection or UI layout logic.
 
@@ -83,9 +83,10 @@ The brain uses ten observations in this phase: root velocity, angular state, til
 ## 4. Physics model
 
 - Each body gene becomes a scaled cube with a `Rigidbody` and `BoxCollider`.
-- Each non-root part receives a `HingeJoint` connected to its gene parent.
-- Joint limits and motor strength come from the genome.
-- A neural output controls target motor velocity; no hand-authored walking gait is supplied.
+- Each non-root part receives a `ConfigurableJoint` connected to its gene parent.
+- Prototype 1 limits the primary angular axis and locks the other angular axes for stability; the joint type leaves a seam for future multi-axis joint genes.
+- Joint limits, drive strength, target angular speed, damping, and the initial settling window are tunable from `EvolutionSimulation`.
+- A neural output controls target angular velocity; no hand-authored walking gait is supplied.
 - Bodies are spawned in independent lanes and cross-creature collisions are ignored. This is a temporary experimental control that makes displacement attributable to the individual. It can be removed when ecology is introduced.
 
 ## 5. Evolution model
@@ -101,9 +102,9 @@ Natural population dynamics are not implemented here. The engine's `BreedNextGen
 
 ## 6. Presentation and input
 
-The runtime bootstrap attaches `EvolutionSimulation` to a generated root object after `SampleScene` loads. It configures the existing camera/light and creates the ground, avoiding a large serialized scene diff during the blank-template phase.
+The runtime bootstrap attaches `EvolutionSimulation` to a generated root object after `SampleScene` loads. It configures the existing camera/light and creates the ground, avoiding a large serialized scene diff during the blank-template phase. The camera is perspective-based and receives a separate `FreeCameraController`: WASD moves, Q/E move vertically, right-mouse drag looks, and the mouse wheel dollies. Camera input is unscaled; pointer-based camera input is disabled over the IMGUI panels so observation remains possible while paused.
 
-The UI uses Unity IMGUI so the prototype does not need a second input-action asset or serialized Canvas prefab. World selection uses the existing Input System mouse position and a physics raycast. This is a presentation choice only; a future UGUI/UI Toolkit front end can consume the same simulation snapshots.
+The UI uses Unity IMGUI so the prototype does not need a second input-action asset or serialized Canvas prefab. World selection uses the existing Input System mouse position and a physics raycast. The controls panel can be scrolled and exposes generation duration plus the main joint drive tuning values at runtime. This is a presentation choice only; a future UGUI/UI Toolkit front end can consume the same simulation snapshots.
 
 ## 7. Known prototype constraints and replacement seams
 
@@ -113,9 +114,8 @@ The UI uses Unity IMGUI so the prototype does not need a second input-action ass
 | Displacement fitness | Isolates locomotion | Fitness/effects system driven by environment and energy |
 | Flat ground | Keeps physics debugging bounded | `EnvironmentController` and environment entities |
 | Fixed brain output ceiling | Avoids dynamic tensor allocation in first pass | Variable brain graph/actuator mapping in `BrainGene` |
-| Hinge joints and GameObjects | Fast to inspect in Unity | Alternate `CreatureBuilder` backend |
+| Configurable joints and GameObjects | More drive/axis flexibility while remaining inspectable | Multi-axis joint genes or alternate `CreatureBuilder` backend |
 | IMGUI | No prefab/scene/UI asset setup | Separate view model plus UGUI/UI Toolkit |
 | Lane collision isolation | Prevents population interference | Remove when interaction/predation becomes a selection pressure |
 
 Any code using one of these constraints should include a nearby TODO or comment when the assumption is not obvious.
-
