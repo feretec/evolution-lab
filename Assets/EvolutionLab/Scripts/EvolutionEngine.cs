@@ -17,6 +17,10 @@ namespace EvolutionLab
         public float damageTaken;
         public string deathReason = string.Empty;
         public bool alive;
+        public bool learningMetricsAvailable;
+        public bool lifetimeLearningEnabled;
+        public float learningSignal;
+        public float learningAdaptationMagnitude;
 
         public CreatureEvaluationResult(CreatureGenome genome, float fitness, float distance)
         {
@@ -52,6 +56,29 @@ namespace EvolutionLab
             damageTaken = Mathf.Max(0f, damage);
             return this;
         }
+
+        public CreatureEvaluationResult WithLearningMetrics(bool enabled, float signal, float adaptation)
+        {
+            if (!float.IsNaN(signal) && !float.IsInfinity(signal)
+                && !float.IsNaN(adaptation) && !float.IsInfinity(adaptation))
+            {
+                learningMetricsAvailable = true;
+                lifetimeLearningEnabled = enabled;
+                learningSignal = signal;
+                learningAdaptationMagnitude = Mathf.Max(0f, adaptation);
+            }
+            return this;
+        }
+
+        public CreatureEvaluationResult WithLearningMetrics(Creature creature)
+        {
+            return creature == null
+                ? this
+                : WithLearningMetrics(
+                    creature.LifetimeLearningEnabled,
+                    creature.LearningSignal,
+                    creature.LearningAdaptationMagnitude);
+        }
     }
 
     [Serializable]
@@ -68,6 +95,7 @@ namespace EvolutionLab
         public int interactions;
         public float averageEnergy;
         public float averageAge;
+        public LearningTelemetrySummary learning = new LearningTelemetrySummary();
 
         public GenerationReport Clone()
         {
@@ -83,7 +111,8 @@ namespace EvolutionLab
                 predations = predations,
                 interactions = interactions,
                 averageEnergy = averageEnergy,
-                averageAge = averageAge
+                averageAge = averageAge,
+                learning = learning == null ? new LearningTelemetrySummary() : learning.Clone()
             };
         }
     }
@@ -102,6 +131,7 @@ namespace EvolutionLab
         public int interactions;
         public float averageEnergy;
         public float averageAge;
+        public LearningTelemetrySummary learning = new LearningTelemetrySummary();
 
         public GenerationRecord Clone()
         {
@@ -117,7 +147,8 @@ namespace EvolutionLab
                 predations = predations,
                 interactions = interactions,
                 averageEnergy = averageEnergy,
-                averageAge = averageAge
+                averageAge = averageAge,
+                learning = learning == null ? new LearningTelemetrySummary() : learning.Clone()
             };
         }
     }
@@ -142,6 +173,10 @@ namespace EvolutionLab
         public int deathGeneration;
         public string deathReason = string.Empty;
         public bool wasAlive;
+        public bool learningMetricsAvailable;
+        public bool lifetimeLearningEnabled;
+        public float learningSignal;
+        public float learningAdaptationMagnitude;
         public CreatureGenome genome;
 
         public static IndividualHistoryRecord FromGenome(
@@ -156,7 +191,11 @@ namespace EvolutionLab
             bool recordedAlive = true,
             int recordedKillCount = 0,
             float recordedDamageTaken = 0f,
-            int recordedDeathGeneration = 0)
+            int recordedDeathGeneration = 0,
+            bool recordedLearningMetricsAvailable = false,
+            bool recordedLifetimeLearningEnabled = false,
+            float recordedLearningSignal = 0f,
+            float recordedLearningAdaptationMagnitude = 0f)
         {
             if (source == null)
             {
@@ -184,6 +223,10 @@ namespace EvolutionLab
                 deathGeneration = recordedDeathGeneration,
                 deathReason = recordedDeathReason ?? string.Empty,
                 wasAlive = recordedAlive,
+                learningMetricsAvailable = recordedLearningMetricsAvailable,
+                lifetimeLearningEnabled = recordedLifetimeLearningEnabled,
+                learningSignal = recordedLearningSignal,
+                learningAdaptationMagnitude = Mathf.Max(0f, recordedLearningAdaptationMagnitude),
                 genome = snapshot
             };
         }
@@ -216,6 +259,12 @@ namespace EvolutionLab
         [SerializeField]
         private int currentCycle;
 
+        // Runtime-only revision used by NaturalHistoryCatalog cache invalidation.
+        // It is intentionally not serialized; loading an archive starts a new
+        // in-memory revision and therefore cannot reuse a previous catalog.
+        [NonSerialized]
+        private int revision;
+
         private Dictionary<string, IndividualHistoryRecord> individualById;
 
         public IReadOnlyList<GenerationRecord> Generations
@@ -238,9 +287,14 @@ namespace EvolutionLab
             get { return currentCycle; }
         }
 
+        public int Revision
+        {
+            get { return revision; }
+        }
+
         public NaturalHistoryCatalog NaturalHistory
         {
-            get { return NaturalHistoryCatalog.Build(individuals); }
+            get { return NaturalHistoryCatalog.Build(individuals, revision); }
         }
 
         public string ToJson()
@@ -332,6 +386,7 @@ namespace EvolutionLab
             }
 
             currentCycle = Mathf.Max(0, archive.currentCycle);
+            revision = 0;
 
             while (generations.Count > MaxGenerationRecords)
             {
@@ -367,7 +422,8 @@ namespace EvolutionLab
                 predations = report.predations,
                 interactions = report.interactions,
                 averageEnergy = report.averageEnergy,
-                averageAge = report.averageAge
+                averageAge = report.averageAge,
+                learning = report.learning == null ? new LearningTelemetrySummary() : report.learning.Clone()
             });
 
             currentCycle++;
@@ -449,7 +505,11 @@ namespace EvolutionLab
                     result.alive,
                     result.killCount,
                     result.damageTaken,
-                    result.alive ? 0 : result.genome.generation);
+                    result.alive ? 0 : result.genome.generation,
+                    result.learningMetricsAvailable,
+                    result.lifetimeLearningEnabled,
+                    result.learningSignal,
+                    result.learningAdaptationMagnitude);
             }
         }
 
@@ -569,7 +629,11 @@ namespace EvolutionLab
             bool recordedAlive = true,
             int recordedKillCount = 0,
             float recordedDamageTaken = 0f,
-            int recordedDeathGeneration = 0)
+            int recordedDeathGeneration = 0,
+            bool recordedLearningMetricsAvailable = false,
+            bool recordedLifetimeLearningEnabled = false,
+            float recordedLearningSignal = 0f,
+            float recordedLearningAdaptationMagnitude = 0f)
         {
             if (source == null || string.IsNullOrEmpty(source.genomeId))
             {
@@ -579,6 +643,28 @@ namespace EvolutionLab
             EnsureIndex();
             if (individualById.TryGetValue(source.genomeId, out IndividualHistoryRecord existing))
             {
+                bool changed = existing.parentId != (source.parentId ?? string.Empty)
+                    || existing.secondaryParentId != (source.secondaryParentId ?? string.Empty)
+                    || existing.generation != source.generation
+                    || existing.bodyPartCount != (source.bodyParts == null ? 0 : source.bodyParts.Count)
+                    || existing.jointCount != source.JointCount
+                    || GenomeDistance.ContentHash(existing.genome) != GenomeDistance.ContentHash(source)
+                    || (includeFitness && (!existing.hasFitness
+                        || existing.fitness != recordedFitness
+                        || existing.distance != recordedDistance
+                        || existing.energy != recordedEnergy
+                        || existing.age != recordedAge
+                        || existing.offspringCount != recordedOffspringCount
+                        || existing.killCount != recordedKillCount
+                        || existing.damageTaken != recordedDamageTaken
+                        || existing.deathReason != (recordedDeathReason ?? string.Empty)
+                        || existing.wasAlive != recordedAlive
+                        || existing.learningMetricsAvailable != recordedLearningMetricsAvailable
+                        || existing.lifetimeLearningEnabled != recordedLifetimeLearningEnabled
+                        || existing.learningSignal != recordedLearningSignal
+                         || existing.learningAdaptationMagnitude != Mathf.Max(0f, recordedLearningAdaptationMagnitude)))
+                     || (!includeFitness && (!existing.wasAlive || !string.IsNullOrEmpty(existing.deathReason)));
+
                 existing.parentId = source.parentId;
                 existing.secondaryParentId = source.secondaryParentId;
                 existing.generation = source.generation;
@@ -595,6 +681,10 @@ namespace EvolutionLab
                     existing.offspringCount = recordedOffspringCount;
                     existing.killCount = recordedKillCount;
                     existing.damageTaken = recordedDamageTaken;
+                    existing.learningMetricsAvailable = recordedLearningMetricsAvailable;
+                    existing.lifetimeLearningEnabled = recordedLifetimeLearningEnabled;
+                    existing.learningSignal = recordedLearningSignal;
+                    existing.learningAdaptationMagnitude = Mathf.Max(0f, recordedLearningAdaptationMagnitude);
                     if (!recordedAlive)
                     {
                         existing.deathGeneration = recordedDeathGeneration <= 0
@@ -609,6 +699,8 @@ namespace EvolutionLab
                     existing.wasAlive = true;
                     existing.deathReason = string.Empty;
                 }
+
+                if (changed) revision++;
 
                 return;
             }
@@ -625,7 +717,11 @@ namespace EvolutionLab
                 recordedAlive,
                 recordedKillCount,
                 recordedDamageTaken,
-                recordedDeathGeneration);
+                recordedDeathGeneration,
+                recordedLearningMetricsAvailable,
+                recordedLifetimeLearningEnabled,
+                recordedLearningSignal,
+                recordedLearningAdaptationMagnitude);
             if (record == null)
             {
                 return;
@@ -633,6 +729,7 @@ namespace EvolutionLab
 
             individuals.Add(record);
             individualById.Add(record.genomeId, record);
+            revision++;
             while (individuals.Count > MaxIndividualRecords)
             {
                 IndividualHistoryRecord oldest = individuals[0];
@@ -693,6 +790,10 @@ namespace EvolutionLab
                 deathGeneration = source.deathGeneration,
                 deathReason = source.deathReason,
                 wasAlive = source.wasAlive,
+                learningMetricsAvailable = source.learningMetricsAvailable,
+                lifetimeLearningEnabled = source.lifetimeLearningEnabled,
+                learningSignal = source.learningSignal,
+                learningAdaptationMagnitude = source.learningAdaptationMagnitude,
                 genome = source.genome.Clone()
             };
         }
@@ -703,14 +804,14 @@ namespace EvolutionLab
     /// </summary>
     public sealed class EvolutionEngine
     {
-        private readonly System.Random random;
+        private readonly DeterministicRandom random;
         private readonly int populationSize;
         private int genomeSerial;
 
         public EvolutionEngine(int populationSize, int seed)
         {
             this.populationSize = Mathf.Max(2, populationSize);
-            random = new System.Random(seed);
+            random = new DeterministicRandom(seed);
             CurrentPopulation = new List<CreatureGenome>(this.populationSize);
             History = new SimulationHistory();
             LastReport = new GenerationReport();
@@ -723,6 +824,22 @@ namespace EvolutionLab
         public GenerationReport LastReport { get; private set; }
 
         public SimulationHistory History { get; private set; }
+
+        public uint RandomState
+        {
+            get { return random.State; }
+        }
+
+        public void RestoreRandomState(uint state, int fallbackSeed)
+        {
+            if (state == 0u)
+            {
+                random.Reset(fallbackSeed);
+                return;
+            }
+
+            random.State = state;
+        }
 
         public void Initialize()
         {
@@ -871,6 +988,29 @@ namespace EvolutionLab
             History.RegisterPopulation(CurrentPopulation);
         }
 
+        /// <summary>
+        /// Captures the live Creature metrics at the history boundary. This is
+        /// the authoritative bridge for callers that still own Creature
+        /// instances; older genome-only callers remain valid and simply carry
+        /// unavailable learning telemetry.
+        /// </summary>
+        public CreatureEvaluationResult CaptureCreatureEvaluation(Creature creature)
+        {
+            return creature == null ? null : creature.CaptureEvaluation().WithLearningMetrics(creature);
+        }
+
+        public List<CreatureEvaluationResult> CaptureCreatureEvaluations(IReadOnlyList<Creature> creatures)
+        {
+            var results = new List<CreatureEvaluationResult>();
+            if (creatures == null) return results;
+            for (int i = 0; i < creatures.Count; i++)
+            {
+                CreatureEvaluationResult result = CaptureCreatureEvaluation(creatures[i]);
+                if (result != null) results.Add(result);
+            }
+            return results;
+        }
+
         public void RecordEcologyCycle(
             IReadOnlyList<CreatureEvaluationResult> results,
             int births,
@@ -916,9 +1056,11 @@ namespace EvolutionLab
             }
 
             float total = 0f;
+            var learning = new LearningTelemetrySummary();
             for (int i = 0; i < ranked.Count; i++)
             {
                 total += ranked[i].fitness;
+                ObserveLearning(learning, ranked[i]);
             }
 
             return new GenerationReport
@@ -929,8 +1071,22 @@ namespace EvolutionLab
                 averageFitness = total / ranked.Count,
                 bestGenomeId = ranked[0].genome.genomeId,
                 averageEnergy = AverageEnergy(ranked),
-                averageAge = AverageAge(ranked)
+                averageAge = AverageAge(ranked),
+                learning = learning
             };
+        }
+
+        private static void ObserveLearning(LearningTelemetrySummary summary, CreatureEvaluationResult result)
+        {
+            if (summary == null || result == null || !result.learningMetricsAvailable)
+            {
+                return;
+            }
+
+            summary.Observe(
+                result.lifetimeLearningEnabled,
+                result.learningSignal,
+                result.learningAdaptationMagnitude);
         }
 
         private static float AverageEnergy(List<CreatureEvaluationResult> results)

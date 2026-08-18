@@ -15,12 +15,52 @@ namespace EvolutionLab
         private float maxEnergy;
         private float respawnDelaySeconds;
         private float respawnRemaining;
+        private bool presentationEnabled = true;
 
         public float CurrentEnergy { get; private set; }
 
         public bool IsAvailable
         {
             get { return CurrentEnergy > 0.001f; }
+        }
+
+        public WorldResourceSnapshot CaptureState(int index)
+        {
+            return new WorldResourceSnapshot
+            {
+                index = index,
+                hasTransform = true,
+                position = transform.position,
+                rotation = transform.rotation,
+                currentEnergy = CurrentEnergy,
+                respawnRemaining = respawnRemaining
+            };
+        }
+
+        public void RestoreState(WorldResourceSnapshot snapshot)
+        {
+            if (snapshot == null)
+            {
+                return;
+            }
+
+            CurrentEnergy = Mathf.Clamp(snapshot.currentEnergy, 0f, maxEnergy);
+            respawnRemaining = Mathf.Clamp(snapshot.respawnRemaining, 0f, respawnDelaySeconds);
+            if (snapshot.hasTransform && IsFinite(snapshot.position) && IsFinite(snapshot.rotation))
+            {
+                transform.SetPositionAndRotation(snapshot.position, snapshot.rotation);
+            }
+            if (CurrentEnergy <= 0.001f && respawnRemaining <= 0f)
+            {
+                respawnRemaining = respawnDelaySeconds;
+            }
+            SetVisible(IsAvailable);
+        }
+
+        public void SetPresentationEnabled(bool enabled)
+        {
+            presentationEnabled = enabled;
+            SetVisible(IsAvailable);
         }
 
         public void Initialize(float energy, float respawnDelay, Color color)
@@ -99,7 +139,7 @@ namespace EvolutionLab
         {
             if (resourceRenderer != null)
             {
-                resourceRenderer.enabled = visible;
+                resourceRenderer.enabled = visible && presentationEnabled;
             }
 
             if (resourceCollider != null)
@@ -115,6 +155,21 @@ namespace EvolutionLab
                 Destroy(resourceMaterial);
                 resourceMaterial = null;
             }
+        }
+
+        private static bool IsFinite(Vector3 value)
+        {
+            return IsFinite(value.x) && IsFinite(value.y) && IsFinite(value.z);
+        }
+
+        private static bool IsFinite(Quaternion value)
+        {
+            return IsFinite(value.x) && IsFinite(value.y) && IsFinite(value.z) && IsFinite(value.w);
+        }
+
+        private static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
         }
     }
 }

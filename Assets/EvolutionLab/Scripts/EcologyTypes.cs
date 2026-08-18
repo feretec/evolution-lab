@@ -69,4 +69,83 @@ namespace EvolutionLab
             };
         }
     }
+
+    /// <summary>
+    /// Aggregated observations of runtime lifetime-learning metrics.
+    /// A sample is counted only when the producer explicitly marks it as
+    /// available; missing values are never converted into zero-valued claims.
+    /// </summary>
+    [Serializable]
+    public sealed class LearningTelemetrySummary
+    {
+        public int observedCount;
+        public int enabledCount;
+        public float enabledRate;
+        public float averageAdaptation;
+        public float maximumAdaptation;
+        public float averageSignal;
+
+        [NonSerialized]
+        private float adaptationTotal;
+        [NonSerialized]
+        private float signalTotal;
+
+        public void Observe(bool enabled, float signal, float adaptation)
+        {
+            if (!IsFinite(signal) || !IsFinite(adaptation)) return;
+            observedCount++;
+            if (enabled) enabledCount++;
+            adaptationTotal += Mathf.Max(0f, adaptation);
+            signalTotal += signal;
+            maximumAdaptation = Mathf.Max(maximumAdaptation, adaptation);
+            Recalculate();
+        }
+
+        public void Merge(LearningTelemetrySummary other)
+        {
+            if (other == null || other.observedCount <= 0) return;
+            observedCount += other.observedCount;
+            enabledCount += Mathf.Max(0, other.enabledCount);
+            adaptationTotal += other.averageAdaptation * other.observedCount;
+            signalTotal += other.averageSignal * other.observedCount;
+            maximumAdaptation = Mathf.Max(maximumAdaptation, other.maximumAdaptation);
+            Recalculate();
+        }
+
+        public LearningTelemetrySummary Clone()
+        {
+            var clone = new LearningTelemetrySummary
+            {
+                observedCount = observedCount,
+                enabledCount = enabledCount,
+                enabledRate = enabledRate,
+                averageAdaptation = averageAdaptation,
+                maximumAdaptation = maximumAdaptation,
+                averageSignal = averageSignal
+            };
+            clone.adaptationTotal = adaptationTotal > 0f ? adaptationTotal : averageAdaptation * observedCount;
+            clone.signalTotal = signalTotal != 0f ? signalTotal : averageSignal * observedCount;
+            return clone;
+        }
+
+        private void Recalculate()
+        {
+            if (observedCount <= 0)
+            {
+                enabledRate = 0f;
+                averageAdaptation = 0f;
+                averageSignal = 0f;
+                return;
+            }
+
+            enabledRate = (float)enabledCount / observedCount;
+            averageAdaptation = adaptationTotal / observedCount;
+            averageSignal = signalTotal / observedCount;
+        }
+
+        private static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
+        }
+    }
 }

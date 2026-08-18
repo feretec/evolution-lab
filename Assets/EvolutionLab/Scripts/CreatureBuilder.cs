@@ -133,6 +133,67 @@ namespace EvolutionLab
                 rigidbodies.Add(rigidbody);
             }
 
+            // Sensors are visual observation markers only. They follow their
+            // host body parts and never participate in physics.
+            for (int sensorIndex = 0; sensorIndex < genome.sensors.Count; sensorIndex++)
+            {
+                SensorGene sensor = genome.sensors[sensorIndex];
+                if (sensor.bodyPartIndex < 0 || sensor.bodyPartIndex >= partObjects.Length)
+                {
+                    continue;
+                }
+
+                GameObject marker = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                marker.name = "SensorMarker_" + sensorIndex.ToString("00");
+                marker.transform.SetParent(partObjects[sensor.bodyPartIndex].transform, false);
+                marker.transform.localPosition = sensor.localPosition;
+                marker.transform.localScale = Vector3.one * 0.1f;
+                Collider markerCollider = marker.GetComponent<Collider>();
+                if (markerCollider != null)
+                {
+                    markerCollider.enabled = false;
+                }
+                Renderer markerRenderer = marker.GetComponent<Renderer>();
+                if (markerRenderer != null)
+                {
+                    if (material != null)
+                    {
+                        markerRenderer.sharedMaterial = material;
+                    }
+                    renderers.Add(markerRenderer);
+                }
+            }
+
+            // The mouth is an observation marker only. It follows its host
+            // body part, has no collider, and therefore cannot change physics.
+            MouthGene mouth = genome.mouth;
+            if (mouth.bodyPartIndex >= 0 && mouth.bodyPartIndex < partObjects.Length)
+            {
+                GameObject marker = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                marker.name = "MouthMarker";
+                marker.transform.SetParent(partObjects[mouth.bodyPartIndex].transform, false);
+                marker.transform.localPosition = mouth.localPosition;
+                marker.transform.localRotation = Quaternion.FromToRotation(
+                    Vector3.forward,
+                    mouth.localDirection.sqrMagnitude < 0.0001f ? Vector3.right : mouth.localDirection);
+                float markerSize = Mathf.Clamp(mouth.reach * 0.12f, 0.04f, 0.22f);
+                marker.transform.localScale = Vector3.one * markerSize;
+                Collider markerCollider = marker.GetComponent<Collider>();
+                if (markerCollider != null)
+                {
+                    markerCollider.enabled = false;
+                }
+                Renderer markerRenderer = marker.GetComponent<Renderer>();
+                if (markerRenderer != null)
+                {
+                    if (material != null)
+                    {
+                        markerRenderer.sharedMaterial = material;
+                    }
+                    renderers.Add(markerRenderer);
+                }
+            }
+
             // Ensure all scaled transforms are reflected in the physics scene
             // before ConfigurableJoints cache their initial anchor state.
             Physics.SyncTransforms();
@@ -150,8 +211,8 @@ namespace EvolutionLab
                 // visible seam stay identical even when length/thickness mutate.
                 joint.anchor = partObjects[i].transform.InverseTransformPoint(connectionPoint);
                 joint.connectedAnchor = partObjects[parentIndex].transform.InverseTransformPoint(connectionPoint);
-                joint.axis = Vector3.forward;
-                joint.secondaryAxis = Vector3.up;
+                joint.axis = SafeAxis(gene.primaryAxis, Vector3.forward);
+                joint.secondaryAxis = SafeSecondaryAxis(gene.secondaryAxis, joint.axis);
                 joint.configuredInWorldSpace = false;
                 joint.enableCollision = false;
                 joint.breakForce = float.PositiveInfinity;
@@ -167,8 +228,12 @@ namespace EvolutionLab
                 joint.yMotion = ConfigurableJointMotion.Locked;
                 joint.zMotion = ConfigurableJointMotion.Locked;
                 joint.angularXMotion = ConfigurableJointMotion.Limited;
-                joint.angularYMotion = ConfigurableJointMotion.Locked;
-                joint.angularZMotion = ConfigurableJointMotion.Locked;
+                joint.angularYMotion = gene.jointYLimit > 0.5f
+                    ? ConfigurableJointMotion.Limited
+                    : ConfigurableJointMotion.Locked;
+                joint.angularZMotion = gene.jointZLimit > 0.5f
+                    ? ConfigurableJointMotion.Limited
+                    : ConfigurableJointMotion.Locked;
 
                 SoftJointLimit lowLimit = joint.lowAngularXLimit;
                 lowLimit.limit = -gene.jointLimit;
@@ -182,6 +247,18 @@ namespace EvolutionLab
                 highLimit.contactDistance = 2f;
                 joint.highAngularXLimit = highLimit;
 
+                SoftJointLimit yLimit = joint.angularYLimit;
+                yLimit.limit = Mathf.Clamp(gene.jointYLimit, 0f, 170f);
+                yLimit.bounciness = 0f;
+                yLimit.contactDistance = 2f;
+                joint.angularYLimit = yLimit;
+
+                SoftJointLimit zLimit = joint.angularZLimit;
+                zLimit.limit = Mathf.Clamp(gene.jointZLimit, 0f, 170f);
+                zLimit.bounciness = 0f;
+                zLimit.contactDistance = 2f;
+                joint.angularZLimit = zLimit;
+
                 joint.rotationDriveMode = RotationDriveMode.XYAndZ;
                 joint.angularXDrive = new JointDrive
                 {
@@ -192,8 +269,8 @@ namespace EvolutionLab
                 joint.angularYZDrive = new JointDrive
                 {
                     positionSpring = 0f,
-                    positionDamper = 0f,
-                    maximumForce = 0f
+                    positionDamper = jointDamping,
+                    maximumForce = gene.driveStrength * jointDriveForce
                 };
                 joint.targetAngularVelocity = Vector3.zero;
                 joint.projectionMode = JointProjectionMode.PositionAndRotation;
@@ -252,6 +329,41 @@ namespace EvolutionLab
             }
 
             return float.IsInfinity(distance) ? 0f : distance;
+        }
+
+        private static Vector3 SafeAxis(Vector3 axis, Vector3 fallback)
+        {
+            if (!IsFinite(axis) || axis.sqrMagnitude < 0.0001f)
+            {
+                return fallback;
+            }
+
+            return axis.normalized;
+        }
+
+        private static Vector3 SafeSecondaryAxis(Vector3 secondary, Vector3 primary)
+        {
+            Vector3 result = Vector3.ProjectOnPlane(secondary, primary);
+            if (!IsFinite(result) || result.sqrMagnitude < 0.0001f)
+            {
+                result = Vector3.Cross(primary, Vector3.up);
+                if (result.sqrMagnitude < 0.0001f)
+                {
+                    result = Vector3.Cross(primary, Vector3.right);
+                }
+            }
+
+            return result.normalized;
+        }
+
+        private static bool IsFinite(Vector3 value)
+        {
+            return IsFinite(value.x) && IsFinite(value.y) && IsFinite(value.z);
+        }
+
+        private static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
         }
     }
 }

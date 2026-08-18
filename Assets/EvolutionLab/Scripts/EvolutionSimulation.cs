@@ -44,11 +44,13 @@ namespace EvolutionLab
         [SerializeField] private float jointTargetSpeedDegrees = 240f;
         [SerializeField] private float jointDamping = 8f;
         [SerializeField] private float settlingDuration = 0.35f;
+        [SerializeField] private bool renderWorld = true;
 
         private readonly List<Creature> creatures = new List<Creature>();
         private EvolutionEngine engine;
         private EnvironmentController environment;
         private EcologyInteractionSystem interactionSystem;
+        private EvolutionEventDetector eventDetector;
         private EvolutionLabUI ui;
         private Camera mainCamera;
         private FreeCameraController freeCamera;
@@ -319,6 +321,11 @@ namespace EvolutionLab
             get { return interactionDamageMultiplier; }
         }
 
+        public bool RenderingEnabled
+        {
+            get { return renderWorld; }
+        }
+
         public string SpeedLabel
         {
             get
@@ -403,6 +410,7 @@ namespace EvolutionLab
 
             engine = new EvolutionEngine(populationSize, randomSeed);
             interactionSystem = new EcologyInteractionSystem();
+            eventDetector = new EvolutionEventDetector();
             engine.Initialize();
             ui = gameObject.AddComponent<EvolutionLabUI>();
             ui.Bind(this);
@@ -444,6 +452,10 @@ namespace EvolutionLab
 
             float deltaTime = Time.fixedDeltaTime;
             environment.Tick(deltaTime);
+            if (interactionSystem != null)
+            {
+                interactionSystem.RebuildSpatialIndex(creatures);
+            }
             pendingDeaths.Clear();
             reproductionCandidates.Clear();
             for (int i = 0; i < creatures.Count; i++)
@@ -515,6 +527,12 @@ namespace EvolutionLab
         public void ToggleEcologicalInteractions()
         {
             enableEcologicalInteractions = !enableEcologicalInteractions;
+        }
+
+        public void ToggleWorldRendering()
+        {
+            renderWorld = !renderWorld;
+            ApplyWorldRendering();
         }
 
         public void ToggleInterCreaturePhysicsIsolation()
@@ -753,8 +771,13 @@ namespace EvolutionLab
             {
                 var archive = new WorldSnapshotArchive
                 {
+                    randomSeed = randomSeed,
+                    engineRandomState = engine.RandomState,
                     generation = Generation,
                     evaluationElapsed = evaluationElapsed,
+                    simulationSpeed = simulationSpeed,
+                    paused = paused,
+                    renderWorld = renderWorld,
                     historyJson = engine.History.ToJson()
                 };
 
@@ -774,7 +797,7 @@ namespace EvolutionLab
                         continue;
                     }
 
-                    archive.creatures.Add(new WorldCreatureSnapshot
+                    WorldCreatureSnapshot snapshot = new WorldCreatureSnapshot
                     {
                         genomeId = creature.Genome.genomeId,
                         position = creature.RootBody.position,
@@ -784,7 +807,14 @@ namespace EvolutionLab
                         offspringCount = creature.OffspringCount,
                         killCount = creature.KillCount,
                         damageTaken = creature.DamageTaken
-                    });
+                    };
+                    creature.CaptureWorldState(snapshot);
+                    archive.creatures.Add(snapshot);
+                }
+
+                if (environment != null)
+                {
+                    environment.CaptureRuntimeState(archive);
                 }
 
                 Directory.CreateDirectory(Application.persistentDataPath);
@@ -822,9 +852,12 @@ namespace EvolutionLab
                 deathsThisCycle = 0;
                 interactionsThisCycle = 0;
                 predationsThisCycle = 0;
-                paused = false;
-                simulationSpeed = 1f;
-                Time.timeScale = 1f;
+                paused = archive.paused;
+                renderWorld = archive.schemaVersion < 2 || archive.renderWorld;
+                simulationSpeed = archive.simulationSpeed <= 0f
+                    ? 1f
+                    : Mathf.Clamp(archive.simulationSpeed, 1f, 100f);
+                Time.timeScale = paused ? 0f : simulationSpeed;
                 evaluationElapsed = Mathf.Clamp(archive.evaluationElapsed, 0f, generationDuration);
 
                 engine = new EvolutionEngine(populationSize, randomSeed);
@@ -835,7 +868,23 @@ namespace EvolutionLab
                 }
 
                 engine.RestorePopulation(archive.population, archive.generation);
+                engine.RestoreRandomState(
+                    archive.schemaVersion >= 4 ? archive.engineRandomState : 0u,
+                    archive.randomSeed == 0 ? randomSeed : archive.randomSeed);
                 SpawnPopulation(engine.CurrentPopulation, archive.creatures);
+                if (environment != null)
+                {
+                    environment.RestoreRuntimeState(archive);
+                }
+                ApplyWorldRendering();
+                if (eventDetector == null)
+                {
+                    eventDetector = new EvolutionEventDetector();
+                }
+                else
+                {
+                    eventDetector.Reset();
+                }
                 historyStatus = "Loaded live world at generation " + Generation + ".";
             }
             catch (System.Exception exception)
@@ -912,7 +961,11 @@ namespace EvolutionLab
                     continue;
                 }
 
-                results.Add(creatures[i].CaptureEvaluation());
+                CreatureEvaluationResult result = engine.CaptureCreatureEvaluation(creatures[i]);
+                if (result != null)
+                {
+                    results.Add(result);
+                }
             }
 
             engine.RecordEcologyCycle(
@@ -921,6 +974,7 @@ namespace EvolutionLab
                 deathsThisCycle,
                 predationsThisCycle,
                 interactionsThisCycle);
+            RecordDetectedEvolutionEvents();
             birthsThisCycle = 0;
             deathsThisCycle = 0;
             interactionsThisCycle = 0;
@@ -940,6 +994,34 @@ namespace EvolutionLab
             {
                 paused = true;
                 Time.timeScale = 0f;
+            }
+        }
+
+        private void RecordDetectedEvolutionEvents()
+        {
+            if (engine == null || engine.History == null || eventDetector == null)
+            {
+                return;
+            }
+
+            List<EvolutionEventRecord> detected = eventDetector.Detect(
+                engine.LastReport,
+                engine.CurrentPopulation);
+            for (int i = 0; i < detected.Count; i++)
+            {
+                EvolutionEventRecord record = detected[i];
+                if (record == null)
+                {
+                    continue;
+                }
+
+                engine.History.RecordEvent(
+                    record.type,
+                    record.generation,
+                    record.subjectId,
+                    record.relatedId,
+                    record.message,
+                    record.value);
             }
         }
 
@@ -975,13 +1057,7 @@ namespace EvolutionLab
                 Creature creature = SpawnCreature(genomes[i], origin, color, initialEnergy);
                 if (snapshot != null)
                 {
-                    creature.RestorePose(snapshot.position, snapshot.rotation);
-                    creature.RestoreLifeState(
-                        snapshot.energy,
-                        snapshot.age,
-                        snapshot.offspringCount,
-                        snapshot.killCount,
-                        snapshot.damageTaken);
+                    creature.RestoreWorldState(snapshot);
                 }
             }
 
@@ -1022,6 +1098,7 @@ namespace EvolutionLab
                 jointTargetSpeedDegrees,
                 jointDamping,
                 settlingDuration);
+            SetCreatureRendering(creature, renderWorld);
             creature.SetResourceSensor(environment == null ? null : environment.GetNearestResourcePosition);
             creature.SetInteractionSensor(position => interactionSystem == null
                 ? CreatureInteractionObservation.Empty
@@ -1039,6 +1116,38 @@ namespace EvolutionLab
             creature.Clicked += SelectCreature;
             creatures.Add(creature);
             return creature;
+        }
+
+        private void ApplyWorldRendering()
+        {
+            if (environment != null)
+            {
+                environment.SetPresentationEnabled(renderWorld);
+            }
+
+            for (int i = 0; i < creatures.Count; i++)
+            {
+                SetCreatureRendering(creatures[i], renderWorld);
+            }
+
+            if (previewCreature != null)
+            {
+                SetCreatureRendering(previewCreature, renderWorld);
+            }
+        }
+
+        private static void SetCreatureRendering(Creature creature, bool enabled)
+        {
+            if (creature == null)
+            {
+                return;
+            }
+
+            Renderer[] renderers = creature.GetComponentsInChildren<Renderer>(true);
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                renderers[i].enabled = enabled;
+            }
         }
 
         private void RecordInteractionEvents(IReadOnlyList<EcologyInteractionEvent> interactionEvents)
@@ -1082,7 +1191,7 @@ namespace EvolutionLab
                     continue;
                 }
 
-                CreatureEvaluationResult result = creature.CaptureEvaluation();
+                CreatureEvaluationResult result = engine.CaptureCreatureEvaluation(creature);
                 engine.History.RecordIndividual(result);
                 engine.History.RecordEvent(
                     EvolutionEventType.Death,

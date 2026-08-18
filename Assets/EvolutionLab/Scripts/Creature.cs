@@ -54,6 +54,7 @@ namespace EvolutionLab
         private float foragingIntent;
         private float damageTaken;
         private int killCount;
+        private const int MotorChannelCount = 8;
 
         public event Action<Creature> Clicked;
 
@@ -97,6 +98,59 @@ namespace EvolutionLab
         public float SocialIntent { get { return socialIntent; } }
 
         public float ForagingIntent { get { return foragingIntent; } }
+
+        /// <summary>
+        /// Read-only lifetime-learning metrics for observation UI/history.
+        /// Fast weights themselves remain private to Brain and are not part of
+        /// the inherited Genome.
+        /// </summary>
+        public bool LifetimeLearningEnabled
+        {
+            get { return brain != null && brain.LearningEnabled; }
+        }
+
+        public float LearningSignal
+        {
+            get { return brain == null ? 0f : brain.LastHomeostaticSignal; }
+        }
+
+        public float LearningAdaptationMagnitude
+        {
+            get { return brain == null ? 0f : brain.AdaptationMagnitude; }
+        }
+
+        public bool TryGetMouthProfile(
+            out Vector3 origin,
+            out Vector3 direction,
+            out float reach,
+            out float efficiency)
+        {
+            origin = rootBody == null ? transform.position : rootBody.position;
+            direction = rootBody == null ? transform.forward : rootBody.transform.right;
+            reach = 1.4f;
+            efficiency = 0.65f;
+            if (Genome == null || bodyParts.Count == 0)
+            {
+                return false;
+            }
+
+            MouthGene mouth = Genome.mouth;
+            int index = Mathf.Clamp(mouth.bodyPartIndex, 0, bodyParts.Count - 1);
+            Rigidbody bodyPart = bodyParts[index];
+            if (bodyPart == null)
+            {
+                return false;
+            }
+
+            Vector3 localDirection = mouth.localDirection.sqrMagnitude < 0.0001f
+                ? Vector3.right
+                : mouth.localDirection.normalized;
+            origin = bodyPart.transform.TransformPoint(mouth.localPosition);
+            direction = bodyPart.transform.TransformDirection(localDirection).normalized;
+            reach = Mathf.Clamp(mouth.reach, 0.25f, 4f);
+            efficiency = Mathf.Clamp(mouth.efficiency, 0.05f, 2f);
+            return IsFinite(origin) && IsFinite(direction);
+        }
 
         public float BodyMass
         {
@@ -276,6 +330,7 @@ namespace EvolutionLab
             foragingIntent = 0f;
             damageTaken = 0f;
             killCount = 0;
+            brain.ResetRuntimeState();
         }
 
         public void ConfigureLife(
@@ -313,6 +368,12 @@ namespace EvolutionLab
             socialIntent = 0f;
             foragingIntent = 0f;
             alive = true;
+            // ConfigureLife is called for a new embodiment. Acquired fast
+            // weights and memory must never leak across births.
+            if (brain != null)
+            {
+                brain.ResetRuntimeState();
+            }
         }
 
         public void RestoreLifeState(
@@ -331,6 +392,142 @@ namespace EvolutionLab
             deathReason = string.Empty;
             alive = true;
             evaluationActive = true;
+        }
+
+        /// <summary>
+        /// Captures the complete embodiment state without copying Genome.
+        /// The Brain runtime adapter is intentionally kept here because the
+        /// archive contract is owned by the live creature, while Brain's
+        /// inherited definition remains immutable and serializable as Genome.
+        /// </summary>
+        public void CaptureWorldState(WorldCreatureSnapshot snapshot)
+        {
+            if (snapshot == null)
+            {
+                return;
+            }
+
+            snapshot.genomeId = Genome == null ? string.Empty : Genome.genomeId;
+            snapshot.hasFullRuntimeState = true;
+            snapshot.position = rootBody == null ? transform.position : rootBody.position;
+            snapshot.rotation = rootBody == null ? transform.rotation : rootBody.rotation;
+            snapshot.energy = energy;
+            snapshot.age = lifeAgeSeconds;
+            snapshot.offspringCount = offspringCount;
+            snapshot.killCount = killCount;
+            snapshot.damageTaken = damageTaken;
+            snapshot.totalEnergyAcquired = totalEnergyAcquired;
+            snapshot.reproductionCooldownRemaining = reproductionCooldownRemaining;
+            snapshot.startX = startX;
+            snapshot.bestX = bestX;
+            snapshot.brainClock = brainClock;
+            snapshot.alive = alive;
+            snapshot.evaluationActive = evaluationActive;
+            snapshot.deathReason = deathReason ?? string.Empty;
+            snapshot.interactionIntent = interactionIntent;
+            snapshot.reproductionIntent = reproductionIntent;
+            snapshot.socialIntent = socialIntent;
+            snapshot.foragingIntent = foragingIntent;
+            if (snapshot.bodyParts == null)
+            {
+                snapshot.bodyParts = new List<WorldRigidbodySnapshot>();
+            }
+            snapshot.bodyParts.Clear();
+            for (int i = 0; i < bodyParts.Count; i++)
+            {
+                Rigidbody bodyPart = bodyParts[i];
+                if (bodyPart == null)
+                {
+                    continue;
+                }
+
+                snapshot.bodyParts.Add(new WorldRigidbodySnapshot
+                {
+                    index = i,
+                    position = bodyPart.position,
+                    rotation = bodyPart.rotation,
+                    linearVelocity = bodyPart.linearVelocity,
+                    angularVelocity = bodyPart.angularVelocity
+                });
+            }
+
+            if (snapshot.brain == null)
+            {
+                snapshot.brain = new BrainRuntimeSnapshot();
+            }
+            brain.CaptureRuntimeState(snapshot.brain);
+        }
+
+        /// <summary>
+        /// Restores a full live embodiment. Archives from schema 1/2 have no
+        /// full-state marker and intentionally fall back to the legacy pose
+        /// and life restoration path.
+        /// </summary>
+        public void RestoreWorldState(WorldCreatureSnapshot snapshot)
+        {
+            if (snapshot == null)
+            {
+                return;
+            }
+
+            if (!snapshot.hasFullRuntimeState || snapshot.bodyParts == null || snapshot.bodyParts.Count == 0)
+            {
+                RestorePose(snapshot.position, snapshot.rotation);
+                RestoreLifeState(snapshot.energy, snapshot.age, snapshot.offspringCount, snapshot.killCount, snapshot.damageTaken);
+                return;
+            }
+
+            // Establish a safe fallback pose for any body part omitted from a
+            // damaged/older schema-3 archive before applying indexed states.
+            if (IsFinite(snapshot.position) && IsFinite(snapshot.rotation))
+            {
+                RestorePose(snapshot.position, snapshot.rotation);
+            }
+
+            for (int i = 0; i < snapshot.bodyParts.Count; i++)
+            {
+                WorldRigidbodySnapshot state = snapshot.bodyParts[i];
+                if (state == null || state.index < 0 || state.index >= bodyParts.Count)
+                {
+                    continue;
+                }
+
+                Rigidbody bodyPart = bodyParts[state.index];
+                if (bodyPart == null || !IsFinite(state.position) || !IsFinite(state.rotation))
+                {
+                    continue;
+                }
+
+                bodyPart.position = state.position;
+                bodyPart.rotation = state.rotation;
+                bodyPart.linearVelocity = IsFinite(state.linearVelocity) ? state.linearVelocity : Vector3.zero;
+                bodyPart.angularVelocity = IsFinite(state.angularVelocity) ? state.angularVelocity : Vector3.zero;
+            }
+
+            energy = Mathf.Clamp(snapshot.energy, 0f, maxEnergy);
+            lifeAgeSeconds = Mathf.Clamp(snapshot.age, 0f, maxAgeSeconds);
+            offspringCount = Mathf.Max(0, snapshot.offspringCount);
+            killCount = Mathf.Max(0, snapshot.killCount);
+            damageTaken = Mathf.Max(0f, snapshot.damageTaken);
+            totalEnergyAcquired = Mathf.Max(0f, snapshot.totalEnergyAcquired);
+            reproductionCooldownRemaining = Mathf.Max(0f, snapshot.reproductionCooldownRemaining);
+            startX = IsFinite(snapshot.startX) ? snapshot.startX : (rootBody == null ? 0f : rootBody.position.x);
+            bestX = IsFinite(snapshot.bestX) ? snapshot.bestX : startX;
+            brainClock = Mathf.Max(0f, snapshot.brainClock);
+            alive = snapshot.alive;
+            evaluationActive = snapshot.evaluationActive && alive;
+            deathReason = snapshot.deathReason ?? string.Empty;
+            interactionIntent = Mathf.Clamp01(snapshot.interactionIntent);
+            reproductionIntent = Mathf.Clamp01(snapshot.reproductionIntent);
+            socialIntent = Mathf.Clamp01(snapshot.socialIntent);
+            foragingIntent = Mathf.Clamp01(snapshot.foragingIntent);
+            brain.RestoreRuntimeState(snapshot.brain);
+            if (!evaluationActive)
+            {
+                DisableMotors();
+            }
+
+            Physics.SyncTransforms();
         }
 
         public void RestorePose(Vector3 position, Quaternion rotation)
@@ -399,6 +596,7 @@ namespace EvolutionLab
             reproductionCooldownRemaining = Mathf.Max(
                 0f,
                 reproductionCooldownRemaining - deltaTime);
+            float energyBefore = energy;
             float speed = rootBody == null || !IsFinite(rootBody.linearVelocity)
                 ? 0f
                 : rootBody.linearVelocity.magnitude;
@@ -409,6 +607,18 @@ namespace EvolutionLab
             float safeEnergyGained = Mathf.Max(0f, IsFinite(energyGained) ? energyGained : 0f);
             energy = Mathf.Clamp(energy + safeEnergyGained - energySpent, 0f, maxEnergy);
             totalEnergyAcquired += safeEnergyGained;
+
+            float normalizedEnergyDelta = maxEnergy <= 0f
+                ? 0f
+                : (energy - energyBefore) / maxEnergy;
+            if (brain != null)
+            {
+                brain.AccumulateHomeostaticFeedback(
+                    normalizedEnergyDelta,
+                    0f,
+                    0f,
+                    energy > 0.001f && lifeAgeSeconds < maxAgeSeconds);
+            }
 
             if (energy <= 0.001f)
             {
@@ -430,6 +640,14 @@ namespace EvolutionLab
             energy = Mathf.Max(0f, energy - reproductionCost);
             reproductionCooldownRemaining = reproductionCooldownSeconds;
             offspringCount++;
+            if (brain != null && maxEnergy > 0f)
+            {
+                brain.AccumulateHomeostaticFeedback(
+                    -reproductionCost / maxEnergy,
+                    0f,
+                    0f,
+                    true);
+            }
             return true;
         }
 
@@ -443,6 +661,14 @@ namespace EvolutionLab
             float applied = Mathf.Min(energy, amount);
             energy = Mathf.Max(0f, energy - applied);
             damageTaken += applied;
+            if (brain != null && maxEnergy > 0f)
+            {
+                brain.AccumulateHomeostaticFeedback(
+                    0f,
+                    applied / maxEnergy,
+                    0f,
+                    energy > 0.001f);
+            }
             if (energy <= 0.001f)
             {
                 Die(string.IsNullOrEmpty(reason) ? "Interaction" : reason);
@@ -459,6 +685,14 @@ namespace EvolutionLab
             }
 
             energy = Mathf.Clamp(energy + amount, 0f, maxEnergy);
+            if (brain != null && maxEnergy > 0f)
+            {
+                brain.AccumulateHomeostaticFeedback(
+                    amount / maxEnergy,
+                    0f,
+                    0f,
+                    true);
+            }
         }
 
         public void RegisterKill()
@@ -494,7 +728,7 @@ namespace EvolutionLab
 
             for (int i = 0; i < joints.Count; i++)
             {
-                ConfigurableJoint joint = joints[i];
+                ConfigurableJoint joint = i < joints.Count ? joints[i] : null;
                 if (joint == null)
                 {
                     continue;
@@ -508,6 +742,10 @@ namespace EvolutionLab
                 drive.positionDamper = jointDamping;
                 drive.maximumForce = geneDriveStrength * jointDriveForce;
                 joint.angularXDrive = drive;
+                JointDrive secondaryDrive = joint.angularYZDrive;
+                secondaryDrive.positionDamper = jointDamping;
+                secondaryDrive.maximumForce = geneDriveStrength * jointDriveForce;
+                joint.angularYZDrive = secondaryDrive;
             }
         }
 
@@ -525,6 +763,8 @@ namespace EvolutionLab
             alive = true;
             deathReason = string.Empty;
             evaluationActive = true;
+            // BeginEvaluation marks a new lifetime for this embodiment.
+            brain.ResetRuntimeState();
             DisableMotors();
         }
 
@@ -625,6 +865,11 @@ namespace EvolutionLab
                 return;
             }
 
+            // Feedback generated by the previous simulation step modifies only
+            // this creature's runtime fast weights. The inherited Genome is
+            // never changed.
+            brain.ApplyPendingLearning(Time.fixedDeltaTime);
+
             // Let the randomly assembled rigidbodies settle before a brain applies torque.
             if (brainClock < settlingDuration)
             {
@@ -647,7 +892,10 @@ namespace EvolutionLab
             foragingIntent = outputs.Length > 11
                 ? Mathf.Clamp01((outputs[11] + 1f) * 0.5f)
                 : 0f;
-            for (int i = 0; i < joints.Count && i < outputs.Length; i++)
+            int motorChannel = 0;
+            float controlCost = 0f;
+            int controlledOutputs = 0;
+            for (int i = 0; i < joints.Count; i++)
             {
                 ConfigurableJoint joint = joints[i];
                 if (joint == null)
@@ -655,17 +903,41 @@ namespace EvolutionLab
                     continue;
                 }
 
-                int geneIndex = i + 1;
-                if (!IsFinite(outputs[i]))
+                Vector3 targetVelocity = Vector3.zero;
+                if (joint.angularXMotion != ConfigurableJointMotion.Locked && motorChannel < MotorChannelCount)
                 {
-                    outputs[i] = 0f;
+                    float value = SafeClamp(outputs[motorChannel], -1f, 1f);
+                    targetVelocity.x = value;
+                    controlCost += Mathf.Abs(value);
+                    controlledOutputs++;
+                    motorChannel++;
                 }
 
-                // ConfigurableJoint target angular velocity is expressed in
-                // radians per second in joint space. Its primary local X axis
-                // is mapped to the genome's single prototype actuator.
-                joint.targetAngularVelocity = Vector3.right
-                    * (outputs[i] * jointTargetSpeedDegrees * Mathf.Deg2Rad);
+                if (joint.angularYMotion != ConfigurableJointMotion.Locked && motorChannel < MotorChannelCount)
+                {
+                    float value = SafeClamp(outputs[motorChannel], -1f, 1f);
+                    targetVelocity.y = value;
+                    controlCost += Mathf.Abs(value);
+                    controlledOutputs++;
+                    motorChannel++;
+                }
+
+                if (joint.angularZMotion != ConfigurableJointMotion.Locked && motorChannel < MotorChannelCount)
+                {
+                    float value = SafeClamp(outputs[motorChannel], -1f, 1f);
+                    targetVelocity.z = value;
+                    controlCost += Mathf.Abs(value);
+                    controlledOutputs++;
+                    motorChannel++;
+                }
+
+                joint.targetAngularVelocity = targetVelocity
+                    * (jointTargetSpeedDegrees * Mathf.Deg2Rad);
+            }
+
+            if (controlledOutputs > 0)
+            {
+                brain.AccumulateControlCost(controlCost / controlledOutputs);
             }
 
             bestX = Mathf.Max(bestX, rootBody.position.x);
@@ -725,6 +997,11 @@ namespace EvolutionLab
             return IsFinite(value.x) && IsFinite(value.y) && IsFinite(value.z);
         }
 
+        private static bool IsFinite(Quaternion value)
+        {
+            return IsFinite(value.x) && IsFinite(value.y) && IsFinite(value.z) && IsFinite(value.w);
+        }
+
         private static float SafeClamp(float value, float min, float max)
         {
             return IsFinite(value) ? Mathf.Clamp(value, min, max) : 0f;
@@ -756,31 +1033,82 @@ namespace EvolutionLab
             Vector3 angularVelocity = IsFinite(rootBody.angularVelocity) ? rootBody.angularVelocity : Vector3.zero;
             float tilt = SafeClamp(Vector3.Dot(rootBody.transform.up, Vector3.up), -1f, 1f);
             float height = SafeClamp((rootBody.position.y - 0.45f) / 2.5f, -1f, 1f);
-            Vector3 localResourceDirection = Vector3.zero;
+            Vector3 resourceWorldDirection = Vector3.zero;
             float resourceProximity = 0f;
-            if (resourcePositionProvider != null)
+            Vector3 individualWorldDirection = Vector3.zero;
+            float individualProximity = 0f;
+            Vector3 threatWorldDirection = Vector3.zero;
+            float threatProximity = 0f;
+            float obstacleProximity = 0f;
+            int sensorCount = Genome == null || Genome.sensors == null ? 0 : Genome.sensors.Count;
+            for (int sensorIndex = 0; sensorIndex < sensorCount && sensorIndex < CreatureGenome.MaxSensors; sensorIndex++)
             {
-                Vector3 resourcePosition = resourcePositionProvider(rootBody.position);
-                Vector3 toResource = resourcePosition - rootBody.position;
-                if (IsFinite(toResource) && toResource.sqrMagnitude > 0.0001f)
+                SensorGene sensor = Genome.sensors[sensorIndex];
+                int bodyIndex = Mathf.Clamp(sensor.bodyPartIndex, 0, bodyParts.Count - 1);
+                Rigidbody sensorBody = bodyParts.Count == 0 ? null : bodyParts[bodyIndex];
+                if (sensorBody == null)
                 {
-                    float resourceDistance = toResource.magnitude;
-                    localResourceDirection = rootBody.transform.InverseTransformDirection(
-                        toResource / resourceDistance);
-                    resourceProximity = SafeClamp(1f - resourceDistance / 12f, 0f, 1f);
+                    continue;
+                }
+
+                Vector3 sensorOrigin = sensorBody.transform.TransformPoint(sensor.localPosition);
+                Vector3 sensorDirection = sensorBody.transform.TransformDirection(
+                    sensor.localDirection.sqrMagnitude < 0.0001f ? Vector3.right : sensor.localDirection).normalized;
+                float sensorRange = Mathf.Max(0.25f, (Genome.ecology == null ? 8f : Genome.ecology.sensorRange)
+                    * Mathf.Clamp(sensor.rangeMultiplier, 0.25f, 2f));
+                float sensorSensitivity = Mathf.Clamp(sensor.sensitivity, 0.05f, 3f);
+
+                if (resourcePositionProvider != null)
+                {
+                    Vector3 resourcePosition = resourcePositionProvider(sensorOrigin);
+                    Vector3 toResource = resourcePosition - sensorOrigin;
+                    float distance = toResource.magnitude;
+                    if (IsFinite(toResource) && distance > 0.0001f && distance <= sensorRange
+                        && InFieldOfView(toResource / distance, sensorDirection, sensor.fieldOfView))
+                    {
+                        float value = Proximity(distance, sensorRange) * sensorSensitivity;
+                        if (value > resourceProximity)
+                        {
+                            resourceProximity = value;
+                            resourceWorldDirection = toResource / distance;
+                        }
+                    }
+                }
+
+                CreatureInteractionObservation interaction = interactionObservationProvider == null
+                    ? CreatureInteractionObservation.Empty
+                    : interactionObservationProvider(sensorOrigin);
+                if (IsFinite(interaction.nearestIndividualDirection)
+                    && InFieldOfView(interaction.nearestIndividualDirection, sensorDirection, sensor.fieldOfView))
+                {
+                    float value = Proximity(interaction.nearestIndividualDistance, sensorRange) * sensorSensitivity;
+                    if (value > individualProximity)
+                    {
+                        individualProximity = value;
+                        individualWorldDirection = interaction.nearestIndividualDirection.normalized;
+                    }
+                }
+                if (IsFinite(interaction.nearestThreatDirection)
+                    && InFieldOfView(interaction.nearestThreatDirection, sensorDirection, sensor.fieldOfView))
+                {
+                    float value = Proximity(interaction.nearestThreatDistance, sensorRange) * sensorSensitivity;
+                    if (value > threatProximity)
+                    {
+                        threatProximity = value;
+                        threatWorldDirection = interaction.nearestThreatDirection.normalized;
+                    }
+                }
+
+                float obstacleValue = SafeClamp(interaction.obstacleProximity, 0f, 1f) * sensorSensitivity;
+                if (InFieldOfView(rootBody.transform.forward, sensorDirection, sensor.fieldOfView))
+                {
+                    obstacleProximity = Mathf.Max(obstacleProximity, obstacleValue);
                 }
             }
 
-            CreatureInteractionObservation interaction = interactionObservationProvider == null
-                ? CreatureInteractionObservation.Empty
-                : interactionObservationProvider(rootBody.position);
-            Vector3 localIndividualDirection = ToLocalDirection(interaction.nearestIndividualDirection);
-            Vector3 localThreatDirection = ToLocalDirection(interaction.nearestThreatDirection);
-            float sensorRange = Genome == null || Genome.ecology == null
-                ? 8f
-                : Mathf.Max(2f, Genome.ecology.sensorRange);
-            float individualProximity = Proximity(interaction.nearestIndividualDistance, sensorRange);
-            float threatProximity = Proximity(interaction.nearestThreatDistance, sensorRange);
+            Vector3 localResourceDirection = ToLocalDirection(resourceWorldDirection);
+            Vector3 localIndividualDirection = ToLocalDirection(individualWorldDirection);
+            Vector3 localThreatDirection = ToLocalDirection(threatWorldDirection);
             EcologyGene ecology = Genome == null ? null : Genome.ecology;
 
             return new[]
@@ -805,9 +1133,22 @@ namespace EvolutionLab
                 SafeClamp(localThreatDirection.x, -1f, 1f),
                 SafeClamp(localThreatDirection.z, -1f, 1f),
                 threatProximity * 2f - 1f,
-                SafeClamp(interaction.obstacleProximity * 2f - 1f, -1f, 1f),
+                SafeClamp(Mathf.Clamp01(obstacleProximity) * 2f - 1f, -1f, 1f),
                 ecology == null ? -1f : ecology.predationDrive * 2f - 1f
             };
+        }
+
+        private static bool InFieldOfView(Vector3 worldDirection, Vector3 sensorDirection, float fieldOfView)
+        {
+            if (!IsFinite(worldDirection) || worldDirection.sqrMagnitude < 0.0001f
+                || !IsFinite(sensorDirection) || sensorDirection.sqrMagnitude < 0.0001f)
+            {
+                return false;
+            }
+
+            float halfFov = Mathf.Clamp(fieldOfView, 10f, 360f) * 0.5f;
+            return halfFov >= 179.9f
+                || Vector3.Angle(worldDirection.normalized, sensorDirection.normalized) <= halfFov;
         }
 
         private Vector3 ToLocalDirection(Vector3 worldDirection)
@@ -892,5 +1233,6 @@ namespace EvolutionLab
                 bodyMaterial = null;
             }
         }
+
     }
 }

@@ -23,7 +23,11 @@ namespace EvolutionLab
     /// </summary>
     public sealed class EcologyInteractionSystem
     {
+        private const float SpatialCellSize = 5f;
         private readonly List<EcologyInteractionEvent> events = new List<EcologyInteractionEvent>();
+        private readonly Dictionary<long, List<Creature>> spatialCells = new Dictionary<long, List<Creature>>();
+        private readonly Dictionary<Creature, int> creatureIndices = new Dictionary<Creature, int>();
+        private readonly List<Creature> neighborBuffer = new List<Creature>(32);
 
         public IReadOnlyList<EcologyInteractionEvent> Events
         {
@@ -34,13 +38,59 @@ namespace EvolutionLab
 
         public int PredationCount { get; private set; }
 
+        /// <summary>
+        /// Rebuilds a lightweight spatial index once per physics step. This
+        /// keeps observation and encounter work local without coupling the
+        /// simulation contract to a future Jobs/ECS implementation.
+        /// </summary>
+        public void RebuildSpatialIndex(IReadOnlyList<Creature> creatures)
+        {
+            spatialCells.Clear();
+            creatureIndices.Clear();
+            if (creatures == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < creatures.Count; i++)
+            {
+                Creature creature = creatures[i];
+                if (creature == null || !creature.IsAlive || creature.RootBody == null)
+                {
+                    continue;
+                }
+
+                creatureIndices[creature] = i;
+                long key = CellKey(creature.RootBody.position);
+                if (!spatialCells.TryGetValue(key, out List<Creature> cell))
+                {
+                    cell = new List<Creature>(8);
+                    spatialCells.Add(key, cell);
+                }
+                cell.Add(creature);
+            }
+        }
+
         public CreatureInteractionObservation Observe(
             Creature subject,
             IReadOnlyList<Creature> creatures,
             EnvironmentController environment)
         {
+            return Observe(
+                subject,
+                subject == null || subject.RootBody == null ? Vector3.zero : subject.RootBody.position,
+                creatures,
+                environment);
+        }
+
+        public CreatureInteractionObservation Observe(
+            Creature subject,
+            Vector3 observationOrigin,
+            IReadOnlyList<Creature> creatures,
+            EnvironmentController environment)
+        {
             CreatureInteractionObservation observation = CreatureInteractionObservation.Empty;
-            if (subject == null || subject.RootBody == null || creatures == null)
+            if (subject == null || subject.RootBody == null || creatures == null || !IsFinite(observationOrigin))
             {
                 return observation;
             }
@@ -52,15 +102,16 @@ namespace EvolutionLab
             float nearestThreatDistance = range * range;
             Creature nearest = null;
             Creature nearestThreat = null;
-            for (int i = 0; i < creatures.Count; i++)
+            CollectNeighbors(observationOrigin, range, creatures);
+            for (int i = 0; i < neighborBuffer.Count; i++)
             {
-                Creature candidate = creatures[i];
+                Creature candidate = neighborBuffer[i];
                 if (candidate == null || candidate == subject || !candidate.IsAlive || candidate.RootBody == null)
                 {
                     continue;
                 }
 
-                Vector3 delta = candidate.RootBody.position - subject.RootBody.position;
+                Vector3 delta = candidate.RootBody.position - observationOrigin;
                 delta.y = 0f;
                 float distance = delta.sqrMagnitude;
                 if (distance < nearestDistance)
@@ -79,7 +130,7 @@ namespace EvolutionLab
 
             if (nearest != null)
             {
-                Vector3 direction = nearest.RootBody.position - subject.RootBody.position;
+                Vector3 direction = nearest.RootBody.position - observationOrigin;
                 direction.y = 0f;
                 observation.nearestIndividualDirection = direction.sqrMagnitude < 0.0001f
                     ? Vector3.zero
@@ -89,7 +140,7 @@ namespace EvolutionLab
 
             if (nearestThreat != null)
             {
-                Vector3 direction = nearestThreat.RootBody.position - subject.RootBody.position;
+                Vector3 direction = nearestThreat.RootBody.position - observationOrigin;
                 direction.y = 0f;
                 observation.nearestThreatDirection = direction.sqrMagnitude < 0.0001f
                     ? Vector3.zero
@@ -100,7 +151,7 @@ namespace EvolutionLab
             if (environment != null)
             {
                 observation.obstacleProximity = environment.GetObstacleProximity(
-                    subject.RootBody.position,
+                    observationOrigin,
                     range);
             }
 
@@ -119,6 +170,11 @@ namespace EvolutionLab
                 return;
             }
 
+            if (creatureIndices.Count == 0)
+            {
+                RebuildSpatialIndex(creatures);
+            }
+
             for (int i = 0; i < creatures.Count; i++)
             {
                 Creature first = creatures[i];
@@ -127,9 +183,14 @@ namespace EvolutionLab
                     continue;
                 }
 
-                for (int j = i + 1; j < creatures.Count; j++)
+                CollectNeighbors(first.RootBody.position, 5f, creatures);
+                for (int j = 0; j < neighborBuffer.Count; j++)
                 {
-                    Creature second = creatures[j];
+                    Creature second = neighborBuffer[j];
+                    if (!creatureIndices.TryGetValue(second, out int secondIndex) || secondIndex <= i)
+                    {
+                        continue;
+                    }
                     if (second == null || !second.IsAlive || second.RootBody == null)
                     {
                         continue;
@@ -174,6 +235,56 @@ namespace EvolutionLab
             }
         }
 
+        private void CollectNeighbors(
+            Vector3 position,
+            float range,
+            IReadOnlyList<Creature> fallbackCreatures)
+        {
+            neighborBuffer.Clear();
+            if (spatialCells.Count == 0)
+            {
+                if (fallbackCreatures != null)
+                {
+                    for (int i = 0; i < fallbackCreatures.Count; i++)
+                    {
+                        neighborBuffer.Add(fallbackCreatures[i]);
+                    }
+                }
+                return;
+            }
+
+            int centerX = Mathf.FloorToInt(position.x / SpatialCellSize);
+            int centerZ = Mathf.FloorToInt(position.z / SpatialCellSize);
+            int cellRadius = Mathf.Max(1, Mathf.CeilToInt(Mathf.Max(0.1f, range) / SpatialCellSize));
+            for (int z = centerZ - cellRadius; z <= centerZ + cellRadius; z++)
+            {
+                for (int x = centerX - cellRadius; x <= centerX + cellRadius; x++)
+                {
+                    if (!spatialCells.TryGetValue(CellKey(x, z), out List<Creature> cell))
+                    {
+                        continue;
+                    }
+
+                    for (int i = 0; i < cell.Count; i++)
+                    {
+                        neighborBuffer.Add(cell[i]);
+                    }
+                }
+            }
+        }
+
+        private static long CellKey(Vector3 position)
+        {
+            return CellKey(
+                Mathf.FloorToInt(position.x / SpatialCellSize),
+                Mathf.FloorToInt(position.z / SpatialCellSize));
+        }
+
+        private static long CellKey(int x, int z)
+        {
+            return ((long)x << 32) ^ (uint)z;
+        }
+
         private void ResolveAttack(
             Creature attacker,
             Creature target,
@@ -191,7 +302,12 @@ namespace EvolutionLab
             EcologyGene targetGene = target.Genome == null ? null : target.Genome.ecology;
             float attackerMass = Mathf.Sqrt(attacker.BodyMass);
             float targetMass = Mathf.Sqrt(target.BodyMass);
-            float attackPower = intent * (0.55f + attackerMass * 0.35f);
+            attacker.TryGetMouthProfile(
+                out Vector3 mouthOrigin,
+                out Vector3 mouthDirection,
+                out float mouthReach,
+                out float mouthEfficiency);
+            float attackPower = intent * (0.55f + attackerMass * 0.35f) * mouthEfficiency;
             float defense = targetGene == null
                 ? 0.4f
                 : targetGene.defenseDrive * 0.75f + targetGene.bodyProtection * 0.65f;
@@ -212,12 +328,19 @@ namespace EvolutionLab
             }
 
             float applied = target.ApplyDamage(damage, "Predated by " + attacker.Genome.genomeId);
+            if (applied > 0.02f)
+            {
+                // Generic interaction energy transfer is shaped by the
+                // inherited mouth efficiency, without assigning a predator
+                // class to either individual.
+                attacker.AddEnergy(applied * 0.08f * mouthEfficiency);
+            }
             bool killed = !target.IsAlive;
             if (killed)
             {
                 PredationCount++;
                 attacker.RegisterKill();
-                attacker.AddEnergy(Mathf.Max(4f, target.MaxEnergy * 0.45f));
+                attacker.AddEnergy(Mathf.Max(4f, target.MaxEnergy * 0.45f * mouthEfficiency));
             }
 
             events.Add(new EcologyInteractionEvent
@@ -232,15 +355,14 @@ namespace EvolutionLab
 
         private static float InteractionRange(Creature first, Creature second)
         {
-            float firstRange = first.Genome == null || first.Genome.ecology == null
-                ? 8f
-                : first.Genome.ecology.sensorRange;
-            float secondRange = second.Genome == null || second.Genome.ecology == null
-                ? 8f
-                : second.Genome.ecology.sensorRange;
-            // Long-range sensors observe; interaction itself still requires a
-            // local encounter so the world remains spatially legible.
-            return Mathf.Clamp(Mathf.Min(firstRange, secondRange) * 0.28f + 1.25f, 1.5f, 5f);
+            Vector3 unusedOrigin;
+            Vector3 unusedDirection;
+            float unusedEfficiency;
+            float firstReach;
+            float secondReach;
+            first.TryGetMouthProfile(out unusedOrigin, out unusedDirection, out firstReach, out unusedEfficiency);
+            second.TryGetMouthProfile(out unusedOrigin, out unusedDirection, out secondReach, out unusedEfficiency);
+            return Mathf.Clamp(Mathf.Max(firstReach, secondReach), 0.5f, 4f);
         }
 
         private static float AttackPotential(Creature attacker, Creature target, float distance)
@@ -252,10 +374,20 @@ namespace EvolutionLab
 
             EcologyGene gene = attacker.Genome == null ? null : attacker.Genome.ecology;
             float predation = gene == null ? 0.2f : gene.predationDrive;
-            float range = gene == null ? 8f : Mathf.Max(2f, gene.sensorRange);
-            float proximity = Mathf.Clamp01(1f - distance / Mathf.Max(1f, range * 0.32f + 1.2f));
+            attacker.TryGetMouthProfile(
+                out Vector3 mouthOrigin,
+                out Vector3 mouthDirection,
+                out float reach,
+                out float efficiency);
+            Vector3 toTarget = target.RootBody.position - mouthOrigin;
+            float mouthDistance = toTarget.magnitude;
+            float facing = toTarget.sqrMagnitude < 0.0001f
+                ? 1f
+                : Mathf.Clamp01(0.35f + Vector3.Dot(mouthDirection, toTarget.normalized) * 0.65f);
+            float proximity = Mathf.Clamp01(1f - Mathf.Max(distance, mouthDistance) / Mathf.Max(0.25f, reach));
             float massAdvantage = Mathf.Clamp01(Mathf.Sqrt(attacker.BodyMass / Mathf.Max(0.1f, target.BodyMass)) * 0.5f);
-            return predation * (0.2f + attacker.InteractionIntent * 0.8f) * (0.45f + massAdvantage) * proximity;
+            return predation * efficiency * (0.2f + attacker.InteractionIntent * 0.8f)
+                * (0.45f + massAdvantage) * facing * proximity;
         }
 
         private static float SocialPotential(Creature creature, float distance, float range)
@@ -266,6 +398,16 @@ namespace EvolutionLab
             float social = gene == null ? 0.25f : gene.socialDrive;
             float proximity = Mathf.Clamp01(1f - distance / Mathf.Max(0.1f, range));
             return social * (0.35f + creature.SocialIntent) * proximity;
+        }
+
+        private static bool IsFinite(Vector3 value)
+        {
+            return IsFinite(value.x) && IsFinite(value.y) && IsFinite(value.z);
+        }
+
+        private static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
         }
     }
 }

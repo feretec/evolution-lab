@@ -33,6 +33,32 @@ namespace EvolutionLab
         public float mass;
         public float jointLimit;
         public float driveStrength;
+        // ConfigurableJoint's local frame is part of the inherited body plan.
+        // Older genomes used forward/up and only the primary X angular axis.
+        public Vector3 jointAxis;
+        public Vector3 secondaryAxis;
+        public float angularYLimit;
+        public float angularZLimit;
+
+        // Source-compatible aliases for the first draft of this schema. The
+        // serialized fields above are the canonical names.
+        public Vector3 primaryAxis
+        {
+            get { return jointAxis; }
+            set { jointAxis = value; }
+        }
+
+        public float jointYLimit
+        {
+            get { return angularYLimit; }
+            set { angularYLimit = value; }
+        }
+
+        public float jointZLimit
+        {
+            get { return angularZLimit; }
+            set { angularZLimit = value; }
+        }
 
         public static BodyPartGene CreateRoot(float length, float thickness, float mass)
         {
@@ -45,8 +71,423 @@ namespace EvolutionLab
                 thickness = thickness,
                 mass = mass,
                 jointLimit = 90f,
-                driveStrength = 1f
+                driveStrength = 1f,
+                primaryAxis = Vector3.forward,
+                secondaryAxis = Vector3.up,
+                jointYLimit = 0f,
+                jointZLimit = 0f
             };
+        }
+    }
+
+    [Serializable]
+    public struct SensorGene
+    {
+        public const int CurrentSchemaVersion = 1;
+
+        public int bodyPartIndex;
+        public Vector3 localPosition;
+        public Vector3 localDirection;
+        public float rangeMultiplier;
+        public float fieldOfView;
+        public float sensitivity;
+
+        public static SensorGene CreateDefault()
+        {
+            return new SensorGene
+            {
+                bodyPartIndex = 0,
+                localPosition = new Vector3(0.45f, 0f, 0f),
+                localDirection = Vector3.right,
+                rangeMultiplier = 1f,
+                fieldOfView = 180f,
+                sensitivity = 1f
+            };
+        }
+
+        public static SensorGene CreateRandom(System.Random random, int bodyPartCount)
+        {
+            SensorGene sensor = new SensorGene
+            {
+                bodyPartIndex = bodyPartCount <= 0 ? 0 : random.Next(0, bodyPartCount),
+                localPosition = new Vector3(
+                    GenomeRandom.Signed(random, 0.45f),
+                    GenomeRandom.Signed(random, 0.22f),
+                    GenomeRandom.Signed(random, 0.22f)),
+                localDirection = new Vector3(
+                    GenomeRandom.Range(random, 0.25f, 1f),
+                    GenomeRandom.Signed(random, 0.55f),
+                    GenomeRandom.Signed(random, 0.55f)),
+                rangeMultiplier = GenomeRandom.Range(random, 0.55f, 1.35f),
+                fieldOfView = GenomeRandom.Range(random, 55f, 270f),
+                sensitivity = GenomeRandom.Range(random, 0.65f, 1.35f)
+            };
+            sensor.Repair(bodyPartCount);
+            return sensor;
+        }
+
+        public SensorGene Clone()
+        {
+            return this;
+        }
+
+        public static SensorGene Crossover(SensorGene first, SensorGene second, System.Random random)
+        {
+            SensorGene result = new SensorGene
+            {
+                bodyPartIndex = GenomeRandom.Chance(random, 0.5f) ? first.bodyPartIndex : second.bodyPartIndex,
+                localPosition = Vector3.Lerp(first.localPosition, second.localPosition, 0.5f),
+                localDirection = Vector3.Lerp(first.localDirection, second.localDirection, 0.5f),
+                rangeMultiplier = Mathf.Lerp(first.rangeMultiplier, second.rangeMultiplier, 0.5f),
+                fieldOfView = Mathf.Lerp(first.fieldOfView, second.fieldOfView, 0.5f),
+                sensitivity = Mathf.Lerp(first.sensitivity, second.sensitivity, 0.5f)
+            };
+            return result;
+        }
+
+        public void Mutate(System.Random random, float mutationRate)
+        {
+            if (GenomeRandom.Chance(random, mutationRate))
+            {
+                localPosition += new Vector3(
+                    GenomeRandom.Signed(random, 0.16f),
+                    GenomeRandom.Signed(random, 0.12f),
+                    GenomeRandom.Signed(random, 0.12f));
+            }
+            if (GenomeRandom.Chance(random, mutationRate))
+            {
+                localDirection = Quaternion.Euler(
+                    GenomeRandom.Signed(random, 18f),
+                    GenomeRandom.Signed(random, 24f),
+                    GenomeRandom.Signed(random, 18f)) * localDirection;
+            }
+            if (GenomeRandom.Chance(random, mutationRate))
+            {
+                rangeMultiplier += GenomeRandom.Signed(random, 0.18f);
+            }
+            if (GenomeRandom.Chance(random, mutationRate))
+            {
+                fieldOfView += GenomeRandom.Signed(random, 24f);
+            }
+            if (GenomeRandom.Chance(random, mutationRate))
+            {
+                sensitivity += GenomeRandom.Signed(random, 0.16f);
+            }
+        }
+
+        public void Repair(int bodyPartCount)
+        {
+            bodyPartIndex = bodyPartCount <= 0 ? 0 : Mathf.Clamp(bodyPartIndex, 0, bodyPartCount - 1);
+            localPosition = SafeVector(localPosition, Vector3.zero);
+            localPosition.x = Mathf.Clamp(localPosition.x, -2f, 2f);
+            localPosition.y = Mathf.Clamp(localPosition.y, -1f, 1f);
+            localPosition.z = Mathf.Clamp(localPosition.z, -1f, 1f);
+            localDirection = SafeVector(localDirection, Vector3.right);
+            if (localDirection.sqrMagnitude < 0.0001f)
+            {
+                localDirection = Vector3.right;
+            }
+            localDirection.Normalize();
+            rangeMultiplier = Mathf.Clamp(Safe(rangeMultiplier, 1f), 0.25f, 2f);
+            fieldOfView = Mathf.Clamp(Safe(fieldOfView, 180f), 10f, 360f);
+            sensitivity = Mathf.Clamp(Safe(sensitivity, 1f), 0.05f, 3f);
+        }
+
+        private static Vector3 SafeVector(Vector3 value, Vector3 fallback)
+        {
+            return IsFinite(value) ? value : fallback;
+        }
+
+        private static bool IsFinite(Vector3 value)
+        {
+            return IsFinite(value.x) && IsFinite(value.y) && IsFinite(value.z);
+        }
+
+        private static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
+        }
+
+        private static float Safe(float value, float fallback)
+        {
+            return IsFinite(value) ? value : fallback;
+        }
+    }
+
+    [Serializable]
+    public struct MouthGene
+    {
+        public int bodyPartIndex;
+        public Vector3 localPosition;
+        public Vector3 localDirection;
+        public float reach;
+        public float efficiency;
+
+        public static MouthGene CreateDefault()
+        {
+            return new MouthGene
+            {
+                bodyPartIndex = 0,
+                localPosition = new Vector3(0.52f, 0f, 0f),
+                localDirection = Vector3.right,
+                reach = 1.4f,
+                efficiency = 0.65f
+            };
+        }
+
+        public static MouthGene CreateRandom(System.Random random, int bodyPartCount)
+        {
+            MouthGene organ = new MouthGene
+            {
+                bodyPartIndex = bodyPartCount <= 0 ? 0 : random.Next(0, bodyPartCount),
+                localPosition = new Vector3(
+                    GenomeRandom.Range(random, 0.25f, 0.7f),
+                    GenomeRandom.Signed(random, 0.18f),
+                    GenomeRandom.Signed(random, 0.18f)),
+                localDirection = new Vector3(
+                    GenomeRandom.Range(random, 0.35f, 1f),
+                    GenomeRandom.Signed(random, 0.45f),
+                    GenomeRandom.Signed(random, 0.45f)),
+                reach = GenomeRandom.Range(random, 0.65f, 2.8f),
+                efficiency = GenomeRandom.Range(random, 0.25f, 1.2f)
+            };
+            organ.Repair(bodyPartCount);
+            return organ;
+        }
+
+        public MouthGene Clone()
+        {
+            return this;
+        }
+
+        public static MouthGene Crossover(
+            MouthGene first,
+            MouthGene second,
+            System.Random random)
+        {
+            return new MouthGene
+            {
+                bodyPartIndex = GenomeRandom.Chance(random, 0.5f) ? first.bodyPartIndex : second.bodyPartIndex,
+                localPosition = Vector3.Lerp(first.localPosition, second.localPosition, 0.5f),
+                localDirection = Vector3.Lerp(first.localDirection, second.localDirection, 0.5f),
+                reach = Mathf.Lerp(first.reach, second.reach, 0.5f),
+                efficiency = Mathf.Lerp(first.efficiency, second.efficiency, 0.5f)
+            };
+        }
+
+        public void Mutate(System.Random random, float mutationRate)
+        {
+            if (GenomeRandom.Chance(random, mutationRate))
+            {
+                localPosition += new Vector3(
+                    GenomeRandom.Signed(random, 0.14f),
+                    GenomeRandom.Signed(random, 0.1f),
+                    GenomeRandom.Signed(random, 0.1f));
+            }
+            if (GenomeRandom.Chance(random, mutationRate))
+            {
+                localDirection = Quaternion.Euler(
+                    GenomeRandom.Signed(random, 16f),
+                    GenomeRandom.Signed(random, 22f),
+                    GenomeRandom.Signed(random, 16f)) * localDirection;
+            }
+            if (GenomeRandom.Chance(random, mutationRate))
+            {
+                reach += GenomeRandom.Signed(random, 0.3f);
+            }
+            if (GenomeRandom.Chance(random, mutationRate))
+            {
+                efficiency += GenomeRandom.Signed(random, 0.14f);
+            }
+        }
+
+        public void Repair(int bodyPartCount)
+        {
+            bodyPartIndex = bodyPartCount <= 0 ? 0 : Mathf.Clamp(bodyPartIndex, 0, bodyPartCount - 1);
+            localPosition = IsFinite(localPosition) ? localPosition : Vector3.zero;
+            localPosition.x = Mathf.Clamp(localPosition.x, -2f, 2f);
+            localPosition.y = Mathf.Clamp(localPosition.y, -1f, 1f);
+            localPosition.z = Mathf.Clamp(localPosition.z, -1f, 1f);
+            localDirection = IsFinite(localDirection) ? localDirection : Vector3.right;
+            if (localDirection.sqrMagnitude < 0.0001f)
+            {
+                localDirection = Vector3.right;
+            }
+            localDirection.Normalize();
+            reach = Mathf.Clamp(Safe(reach, 1.4f), 0.25f, 4f);
+            efficiency = Mathf.Clamp(Safe(efficiency, 0.65f), 0.05f, 2f);
+        }
+
+        private static bool IsFinite(Vector3 value)
+        {
+            return IsFinite(value.x) && IsFinite(value.y) && IsFinite(value.z);
+        }
+
+        private static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
+        }
+
+        private static float Safe(float value, float fallback)
+        {
+            return IsFinite(value) ? value : fallback;
+        }
+    }
+
+    /// <summary>
+    /// Inherited parameters for lifetime neural plasticity.
+    ///
+    /// These values describe how an individual learns; they are not the
+    /// individual's acquired memory. Runtime fast weights and traces live in
+    /// Brain and are intentionally discarded when a creature dies or breeds
+    /// (Baldwinian inheritance).
+    /// </summary>
+    [Serializable]
+    public sealed class LifetimeLearningGene
+    {
+        public const int CurrentSchemaVersion = 1;
+
+        public int schemaVersion = CurrentSchemaVersion;
+        public bool enabled = true;
+        public float learningRate = 0.018f;
+        public float eligibilityDecay = 0.9f;
+        public float memoryRetention = 0.82f;
+        public float fastWeightLimit = 0.75f;
+        public float energyDeltaScale = 5f;
+        public float damageScale = 5f;
+        public float controlCostScale = 0.35f;
+        public float survivalBias = 0.012f;
+
+        public static LifetimeLearningGene CreateRandom(System.Random random)
+        {
+            var gene = new LifetimeLearningGene
+            {
+                learningRate = GenomeRandom.Range(random, 0.006f, 0.035f),
+                eligibilityDecay = GenomeRandom.Range(random, 0.78f, 0.97f),
+                memoryRetention = GenomeRandom.Range(random, 0.65f, 0.94f),
+                fastWeightLimit = GenomeRandom.Range(random, 0.35f, 1.15f),
+                energyDeltaScale = GenomeRandom.Range(random, 2.5f, 7.5f),
+                damageScale = GenomeRandom.Range(random, 2.5f, 7.5f),
+                controlCostScale = GenomeRandom.Range(random, 0.1f, 0.7f),
+                survivalBias = GenomeRandom.Range(random, 0.002f, 0.025f)
+            };
+            gene.Repair();
+            return gene;
+        }
+
+        public LifetimeLearningGene Clone()
+        {
+            Repair();
+            return new LifetimeLearningGene
+            {
+                schemaVersion = schemaVersion,
+                enabled = enabled,
+                learningRate = learningRate,
+                eligibilityDecay = eligibilityDecay,
+                memoryRetention = memoryRetention,
+                fastWeightLimit = fastWeightLimit,
+                energyDeltaScale = energyDeltaScale,
+                damageScale = damageScale,
+                controlCostScale = controlCostScale,
+                survivalBias = survivalBias
+            };
+        }
+
+        public static LifetimeLearningGene Crossover(
+            LifetimeLearningGene first,
+            LifetimeLearningGene second,
+            System.Random random)
+        {
+            LifetimeLearningGene a = first == null ? null : first.Clone();
+            LifetimeLearningGene b = second == null ? null : second.Clone();
+            LifetimeLearningGene result = a ?? b ?? new LifetimeLearningGene();
+            if (a == null || b == null)
+            {
+                result.Repair();
+                return result;
+            }
+
+            result.enabled = GenomeRandom.Chance(random, 0.5f) ? a.enabled : b.enabled;
+            result.learningRate = Mathf.Lerp(a.learningRate, b.learningRate, 0.5f);
+            result.eligibilityDecay = Mathf.Lerp(a.eligibilityDecay, b.eligibilityDecay, 0.5f);
+            result.memoryRetention = Mathf.Lerp(a.memoryRetention, b.memoryRetention, 0.5f);
+            result.fastWeightLimit = Mathf.Lerp(a.fastWeightLimit, b.fastWeightLimit, 0.5f);
+            result.energyDeltaScale = Mathf.Lerp(a.energyDeltaScale, b.energyDeltaScale, 0.5f);
+            result.damageScale = Mathf.Lerp(a.damageScale, b.damageScale, 0.5f);
+            result.controlCostScale = Mathf.Lerp(a.controlCostScale, b.controlCostScale, 0.5f);
+            result.survivalBias = Mathf.Lerp(a.survivalBias, b.survivalBias, 0.5f);
+            result.Repair();
+            return result;
+        }
+
+        public void Mutate(System.Random random, float mutationRate)
+        {
+            Repair();
+            learningRate = MutateFloat(random, learningRate, mutationRate, 0.006f, 0.001f, 0.08f);
+            eligibilityDecay = MutateFloat(random, eligibilityDecay, mutationRate, 0.045f, 0.55f, 0.995f);
+            memoryRetention = MutateFloat(random, memoryRetention, mutationRate, 0.06f, 0.25f, 0.995f);
+            fastWeightLimit = MutateFloat(random, fastWeightLimit, mutationRate, 0.12f, 0.1f, 1.5f);
+            energyDeltaScale = MutateFloat(random, energyDeltaScale, mutationRate, 0.8f, 0.25f, 12f);
+            damageScale = MutateFloat(random, damageScale, mutationRate, 0.8f, 0.25f, 12f);
+            controlCostScale = MutateFloat(random, controlCostScale, mutationRate, 0.1f, 0f, 2f);
+            survivalBias = MutateFloat(random, survivalBias, mutationRate, 0.004f, 0f, 0.08f);
+            if (GenomeRandom.Chance(random, mutationRate * 0.08f))
+            {
+                enabled = !enabled;
+            }
+
+            Repair();
+        }
+
+        public void Repair()
+        {
+            // A missing field in a pre-schema-4 archive is zero-filled by
+            // JsonUtility. The nested schema marker lets us distinguish that
+            // from a valid, intentionally disabled learning gene.
+            if (schemaVersion <= 0)
+            {
+                schemaVersion = CurrentSchemaVersion;
+                enabled = true;
+                learningRate = 0.018f;
+                eligibilityDecay = 0.9f;
+                memoryRetention = 0.82f;
+                fastWeightLimit = 0.75f;
+                energyDeltaScale = 5f;
+                damageScale = 5f;
+                controlCostScale = 0.35f;
+                survivalBias = 0.012f;
+            }
+
+            schemaVersion = CurrentSchemaVersion;
+            learningRate = Mathf.Clamp(Safe(learningRate, 0.018f), 0.001f, 0.08f);
+            eligibilityDecay = Mathf.Clamp(Safe(eligibilityDecay, 0.9f), 0.55f, 0.995f);
+            memoryRetention = Mathf.Clamp(Safe(memoryRetention, 0.82f), 0.25f, 0.995f);
+            fastWeightLimit = Mathf.Clamp(Safe(fastWeightLimit, 0.75f), 0.1f, 1.5f);
+            energyDeltaScale = Mathf.Clamp(Safe(energyDeltaScale, 5f), 0.25f, 12f);
+            damageScale = Mathf.Clamp(Safe(damageScale, 5f), 0.25f, 12f);
+            controlCostScale = Mathf.Clamp(Safe(controlCostScale, 0.35f), 0f, 2f);
+            survivalBias = Mathf.Clamp(Safe(survivalBias, 0.012f), 0f, 0.08f);
+        }
+
+        private static float MutateFloat(
+            System.Random random,
+            float value,
+            float mutationRate,
+            float step,
+            float min,
+            float max)
+        {
+            if (GenomeRandom.Chance(random, mutationRate))
+            {
+                value += GenomeRandom.Signed(random, step);
+            }
+
+            return Mathf.Clamp(value, min, max);
+        }
+
+        private static float Safe(float value, float fallback)
+        {
+            return float.IsNaN(value) || float.IsInfinity(value) ? fallback : value;
         }
     }
 
@@ -60,10 +501,16 @@ namespace EvolutionLab
         public const int HiddenCount = 8;
         public const int MaxOutputCount = 12;
 
+        // Arrays retain a fixed maximum shape for fast evaluation and archive
+        // compatibility, while this inherited value evolves the number of
+        // neurons that actually participate in the controller.
+        public int activeHiddenCount = HiddenCount;
         public float[] inputHiddenWeights;
         public float[] hiddenBiases;
         public float[] hiddenOutputWeights;
         public float[] outputBiases;
+        // Inherited learning rules. Brain owns all acquired runtime state.
+        public LifetimeLearningGene learning = new LifetimeLearningGene();
 
         public BrainGene()
         {
@@ -73,6 +520,8 @@ namespace EvolutionLab
         public static BrainGene CreateRandom(System.Random random)
         {
             var gene = new BrainGene();
+            gene.activeHiddenCount = random.Next(3, HiddenCount + 1);
+            gene.learning = LifetimeLearningGene.CreateRandom(random);
             for (int i = 0; i < gene.inputHiddenWeights.Length; i++)
             {
                 gene.inputHiddenWeights[i] = GenomeRandom.Signed(random, 0.9f);
@@ -101,10 +550,14 @@ namespace EvolutionLab
             EnsureShape();
             var clone = new BrainGene
             {
+                activeHiddenCount = activeHiddenCount,
                 inputHiddenWeights = (float[])inputHiddenWeights.Clone(),
                 hiddenBiases = (float[])hiddenBiases.Clone(),
                 hiddenOutputWeights = (float[])hiddenOutputWeights.Clone(),
-                outputBiases = (float[])outputBiases.Clone()
+                outputBiases = (float[])outputBiases.Clone(),
+                learning = learning == null
+                    ? new LifetimeLearningGene()
+                    : learning.Clone()
             };
             return clone;
         }
@@ -116,14 +569,28 @@ namespace EvolutionLab
             MutateArray(random, hiddenBiases, mutationRate, 0.4f);
             MutateArray(random, hiddenOutputWeights, mutationRate, 0.55f);
             MutateArray(random, outputBiases, mutationRate, 0.4f);
+            if (GenomeRandom.Chance(random, mutationRate * 0.5f))
+            {
+                activeHiddenCount += random.Next(-1, 2);
+            }
+            learning = learning ?? new LifetimeLearningGene();
+            learning.Mutate(random, mutationRate);
+            activeHiddenCount = Mathf.Clamp(activeHiddenCount, 2, HiddenCount);
         }
 
         public void EnsureShape()
         {
+            // Zero is the JsonUtility value for archives created before this
+            // field existed; preserve their former eight-neuron behaviour.
+            activeHiddenCount = activeHiddenCount <= 0
+                ? HiddenCount
+                : Mathf.Clamp(activeHiddenCount, 2, HiddenCount);
             inputHiddenWeights = Resize(inputHiddenWeights, InputCount * HiddenCount);
             hiddenBiases = Resize(hiddenBiases, HiddenCount);
             hiddenOutputWeights = Resize(hiddenOutputWeights, HiddenCount * MaxOutputCount);
             outputBiases = Resize(outputBiases, MaxOutputCount);
+            learning = learning ?? new LifetimeLearningGene();
+            learning.Repair();
         }
 
         private static void MutateArray(System.Random random, float[] values, float mutationRate, float step)
@@ -274,9 +741,13 @@ namespace EvolutionLab
     [Serializable]
     public sealed class CreatureGenome
     {
-        public const int CurrentSchemaVersion = 3;
+        // Schema 5 introduces inherited sensor and interaction-organ topology
+        // plus multi-axis joint geometry. Runtime fast weights are deliberately
+        // not part of this serialized schema.
+        public const int CurrentSchemaVersion = 5;
         public const int MinBodyParts = 2;
         public const int MaxBodyParts = 12;
+        public const int MaxSensors = 3;
 
         public int schemaVersion = CurrentSchemaVersion;
         public string genomeId = string.Empty;
@@ -287,6 +758,8 @@ namespace EvolutionLab
         public List<BodyPartGene> bodyParts = new List<BodyPartGene>();
         public BrainGene brain = new BrainGene();
         public EcologyGene ecology = new EcologyGene();
+        public List<SensorGene> sensors = new List<SensorGene>();
+        public MouthGene mouth = MouthGene.CreateDefault();
 
         public int JointCount
         {
@@ -305,7 +778,9 @@ namespace EvolutionLab
                 mutationRate = mutationRate,
                 brain = brain == null ? new BrainGene() : brain.Clone(),
                 ecology = ecology == null ? new EcologyGene() : ecology.Clone(),
-                bodyParts = new List<BodyPartGene>()
+                bodyParts = new List<BodyPartGene>(),
+                sensors = sensors == null ? new List<SensorGene>() : new List<SensorGene>(sensors),
+                mouth = mouth.Clone()
             };
 
             if (bodyParts != null)
@@ -328,7 +803,9 @@ namespace EvolutionLab
                 mutationRate = GenomeRandom.Range(random, 0.10f, 0.22f),
                 bodyParts = new List<BodyPartGene>(),
                 brain = BrainGene.CreateRandom(random),
-                ecology = EcologyGene.CreateRandom(random)
+                ecology = EcologyGene.CreateRandom(random),
+                sensors = new List<SensorGene>(),
+                mouth = MouthGene.CreateDefault()
             };
 
             int partCount = random.Next(3, 7);
@@ -358,9 +835,24 @@ namespace EvolutionLab
                     thickness = thickness,
                     mass = GenomeRandom.Range(random, 0.25f, 1.25f),
                     jointLimit = GenomeRandom.Range(random, 35f, 145f),
-                    driveStrength = GenomeRandom.Range(random, 0.45f, 1.6f)
+                    driveStrength = GenomeRandom.Range(random, 0.45f, 1.6f),
+                    primaryAxis = Vector3.forward,
+                    secondaryAxis = Vector3.up,
+                    jointYLimit = GenomeRandom.Chance(random, 0.42f)
+                        ? GenomeRandom.Range(random, 18f, 100f)
+                        : 0f,
+                    jointZLimit = GenomeRandom.Chance(random, 0.32f)
+                        ? GenomeRandom.Range(random, 18f, 100f)
+                        : 0f
                 });
             }
+
+            int sensorCount = random.Next(1, 3);
+            for (int i = 0; i < sensorCount; i++)
+            {
+                genome.sensors.Add(SensorGene.CreateRandom(random, genome.bodyParts.Count));
+            }
+            genome.mouth = MouthGene.CreateRandom(random, genome.bodyParts.Count);
 
             genome.Repair();
             return genome;
@@ -421,6 +913,10 @@ namespace EvolutionLab
                     part.mass = Mathf.Lerp(part.mass, other.mass, 0.5f);
                     part.jointLimit = Mathf.LerpAngle(part.jointLimit, other.jointLimit, 0.5f);
                     part.driveStrength = Mathf.Lerp(part.driveStrength, other.driveStrength, 0.5f);
+                    part.primaryAxis = Vector3.Lerp(part.primaryAxis, other.primaryAxis, 0.5f);
+                    part.secondaryAxis = Vector3.Lerp(part.secondaryAxis, other.secondaryAxis, 0.5f);
+                    part.jointYLimit = Mathf.Lerp(part.jointYLimit, other.jointYLimit, 0.5f);
+                    part.jointZLimit = Mathf.Lerp(part.jointZLimit, other.jointZLimit, 0.5f);
                     part.localOffset = Vector3.Lerp(part.localOffset, other.localOffset, 0.5f);
                     part.localEulerAngles = Vector3.Lerp(part.localEulerAngles, other.localEulerAngles, 0.5f);
                     child.bodyParts[i] = part;
@@ -436,6 +932,19 @@ namespace EvolutionLab
                 MixArrays(random, child.brain.hiddenBiases, b.brain.hiddenBiases);
                 MixArrays(random, child.brain.hiddenOutputWeights, b.brain.hiddenOutputWeights);
                 MixArrays(random, child.brain.outputBiases, b.brain.outputBiases);
+                child.brain.learning = LifetimeLearningGene.Crossover(
+                    child.brain.learning,
+                    b.brain.learning,
+                    random);
+                child.brain.activeHiddenCount = GenomeRandom.Chance(random, 0.5f)
+                    ? child.brain.activeHiddenCount
+                    : b.brain.activeHiddenCount;
+            }
+
+            child.sensors = CrossoverSensors(child.sensors, b == null ? null : b.sensors, random);
+            if (b != null)
+            {
+                child.mouth = MouthGene.Crossover(child.mouth, b.mouth, random);
             }
 
             child.Repair();
@@ -494,6 +1003,32 @@ namespace EvolutionLab
                     part.driveStrength = Mathf.Clamp(part.driveStrength + GenomeRandom.Signed(random, 0.25f), 0.2f, 2.5f);
                 }
 
+                if (i > 0 && GenomeRandom.Chance(random, mutationRate))
+                {
+                    part.primaryAxis = Quaternion.Euler(
+                        GenomeRandom.Signed(random, 18f),
+                        GenomeRandom.Signed(random, 24f),
+                        GenomeRandom.Signed(random, 18f)) * part.primaryAxis;
+                }
+
+                if (i > 0 && GenomeRandom.Chance(random, mutationRate))
+                {
+                    part.secondaryAxis = Quaternion.Euler(
+                        GenomeRandom.Signed(random, 18f),
+                        GenomeRandom.Signed(random, 24f),
+                        GenomeRandom.Signed(random, 18f)) * part.secondaryAxis;
+                }
+
+                if (i > 0 && GenomeRandom.Chance(random, mutationRate))
+                {
+                    part.jointYLimit = Mathf.Clamp(part.jointYLimit + GenomeRandom.Signed(random, 16f), 0f, 170f);
+                }
+
+                if (i > 0 && GenomeRandom.Chance(random, mutationRate))
+                {
+                    part.jointZLimit = Mathf.Clamp(part.jointZLimit + GenomeRandom.Signed(random, 16f), 0f, 170f);
+                }
+
                 bodyParts[i] = part;
             }
 
@@ -515,7 +1050,11 @@ namespace EvolutionLab
                     thickness = GenomeRandom.Range(random, 0.1f, 0.3f),
                     mass = GenomeRandom.Range(random, 0.2f, 1.1f),
                     jointLimit = GenomeRandom.Range(random, 30f, 150f),
-                    driveStrength = GenomeRandom.Range(random, 0.35f, 1.8f)
+                    driveStrength = GenomeRandom.Range(random, 0.35f, 1.8f),
+                    primaryAxis = Vector3.forward,
+                    secondaryAxis = Vector3.up,
+                    jointYLimit = GenomeRandom.Chance(random, 0.45f) ? GenomeRandom.Range(random, 15f, 95f) : 0f,
+                    jointZLimit = GenomeRandom.Chance(random, 0.35f) ? GenomeRandom.Range(random, 15f, 95f) : 0f
                 });
             }
             else if (bodyParts.Count > MinBodyParts && GenomeRandom.Chance(random, mutationRate * 0.25f))
@@ -527,17 +1066,47 @@ namespace EvolutionLab
             brain.Mutate(random, mutationRate);
             ecology = ecology ?? EcologyGene.CreateRandom(random);
             ecology.Mutate(random, mutationRate);
+
+            for (int i = 0; i < sensors.Count; i++)
+            {
+                SensorGene sensor = sensors[i];
+                sensor.Mutate(random, mutationRate);
+                sensors[i] = sensor;
+            }
+
+            if (sensors.Count < MaxSensors && GenomeRandom.Chance(random, mutationRate * 0.3f))
+            {
+                sensors.Add(SensorGene.CreateRandom(random, bodyParts.Count));
+            }
+            else if (sensors.Count > 1 && GenomeRandom.Chance(random, mutationRate * 0.2f))
+            {
+                sensors.RemoveAt(sensors.Count - 1);
+            }
+
+            mouth.Mutate(random, mutationRate);
             Repair();
         }
 
         public void Repair()
         {
+            int sourceSchema = schemaVersion;
+            bool legacySingleAxis = sourceSchema < 5;
             schemaVersion = CurrentSchemaVersion;
             bodyParts = bodyParts ?? new List<BodyPartGene>();
             brain = brain ?? new BrainGene();
             brain.EnsureShape();
             ecology = ecology ?? new EcologyGene();
             ecology.Repair();
+            sensors = sensors ?? new List<SensorGene>();
+            // Mouth is a single generic interaction organ. It has no predator
+            // or prey class; its continuous reach/efficiency shape outcomes.
+            if (sourceSchema < 5)
+            {
+                // Schema 4 and older had an implicit root-centred interaction
+                // profile. Preserve that capability instead of accepting the
+                // zero-filled struct as an extremely short, inefficient mouth.
+                mouth = MouthGene.CreateDefault();
+            }
 
             if (bodyParts.Count == 0)
             {
@@ -551,7 +1120,11 @@ namespace EvolutionLab
                     thickness = 0.2f,
                     mass = 0.5f,
                     jointLimit = 90f,
-                    driveStrength = 1f
+                    driveStrength = 1f,
+                    primaryAxis = Vector3.forward,
+                    secondaryAxis = Vector3.up,
+                    jointYLimit = 0f,
+                    jointZLimit = 0f
                 });
             }
 
@@ -569,6 +1142,29 @@ namespace EvolutionLab
                 part.mass = Mathf.Clamp(part.mass, 0.12f, 2.8f);
                 part.jointLimit = Mathf.Clamp(part.jointLimit, 20f, 170f);
                 part.driveStrength = Mathf.Clamp(part.driveStrength, 0.2f, 2.5f);
+                part.primaryAxis = SafeVector(part.primaryAxis, Vector3.forward);
+                if (part.primaryAxis.sqrMagnitude < 0.0001f)
+                {
+                    part.primaryAxis = Vector3.forward;
+                }
+                part.primaryAxis.Normalize();
+                part.secondaryAxis = SafeVector(part.secondaryAxis, Vector3.up);
+                part.secondaryAxis = Vector3.ProjectOnPlane(part.secondaryAxis, part.primaryAxis);
+                if (part.secondaryAxis.sqrMagnitude < 0.0001f)
+                {
+                    part.secondaryAxis = Vector3.Cross(part.primaryAxis, Vector3.right);
+                    if (part.secondaryAxis.sqrMagnitude < 0.0001f)
+                    {
+                        part.secondaryAxis = Vector3.Cross(part.primaryAxis, Vector3.up);
+                    }
+                }
+                part.secondaryAxis.Normalize();
+                part.jointYLimit = legacySingleAxis
+                    ? 0f
+                    : Mathf.Clamp(Safe(part.jointYLimit, 0f), 0f, 170f);
+                part.jointZLimit = legacySingleAxis
+                    ? 0f
+                    : Mathf.Clamp(Safe(part.jointZLimit, 0f), 0f, 170f);
                 if (i == 0)
                 {
                     part.localOffset = Vector3.zero;
@@ -581,6 +1177,23 @@ namespace EvolutionLab
 
                 bodyParts[i] = part;
             }
+
+            while (sensors.Count > MaxSensors)
+            {
+                sensors.RemoveAt(sensors.Count - 1);
+            }
+            if (sensors.Count == 0)
+            {
+                sensors.Add(SensorGene.CreateDefault());
+            }
+            for (int i = 0; i < sensors.Count; i++)
+            {
+                SensorGene sensor = sensors[i];
+                sensor.Repair(bodyParts.Count);
+                sensors[i] = sensor;
+            }
+
+            mouth.Repair(bodyParts.Count);
         }
 
         public string ToJson()
@@ -598,6 +1211,51 @@ namespace EvolutionLab
                     first[i] = second[i];
                 }
             }
+        }
+
+        private static List<SensorGene> CrossoverSensors(
+            List<SensorGene> first,
+            List<SensorGene> second,
+            System.Random random)
+        {
+            var result = first == null ? new List<SensorGene>() : new List<SensorGene>(first);
+            if (second != null)
+            {
+                int shared = Mathf.Min(result.Count, second.Count);
+                for (int i = 0; i < shared; i++)
+                {
+                    if (GenomeRandom.Chance(random, 0.5f))
+                    {
+                        result[i] = SensorGene.Crossover(result[i], second[i], random);
+                    }
+                }
+
+                if (result.Count < MaxSensors && second.Count > shared && GenomeRandom.Chance(random, 0.5f))
+                {
+                    result.Add(second[shared]);
+                }
+            }
+            return result;
+        }
+
+        private static Vector3 SafeVector(Vector3 value, Vector3 fallback)
+        {
+            return IsFinite(value) ? value : fallback;
+        }
+
+        private static bool IsFinite(Vector3 value)
+        {
+            return IsFinite(value.x) && IsFinite(value.y) && IsFinite(value.z);
+        }
+
+        private static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
+        }
+
+        private static float Safe(float value, float fallback)
+        {
+            return IsFinite(value) ? value : fallback;
         }
     }
 }

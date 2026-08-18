@@ -10,10 +10,12 @@ namespace EvolutionLab
     public sealed class EnvironmentFeature : MonoBehaviour
     {
         public float PhysicalRadius { get; private set; }
+        public bool IsMovable { get; private set; }
 
-        public void Initialize(float physicalRadius)
+        public void Initialize(float physicalRadius, bool isMovable = false)
         {
             PhysicalRadius = Mathf.Max(0.1f, physicalRadius);
+            IsMovable = isMovable;
         }
     }
 }
